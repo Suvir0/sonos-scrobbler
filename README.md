@@ -22,22 +22,26 @@ Do these in order. Steps 1 and 2 must be done before anything can be tested end 
 Everything below hard-codes it, and changing it later means re-registering URLs in two
 portals. The working default is `https://scrobbler.suvir.net`.
 
-`suvir.net` must be on Cloudflare DNS for the custom-domain route. Until it is, `wrangler.jsonc`
-ships with `workers_dev: true` and a `*.workers.dev` URL; flip `workers_dev` to `false` and
-uncomment `routes` once DNS is ready, then update `PUBLIC_BASE_URL` in `vars` **and** both URLs
-in the Sonos portal.
+`suvir.net` must be on Cloudflare DNS for the custom-domain route, which is what provisions
+the CA-signed certificate the Sonos event callback requires. `wrangler.jsonc` ships configured
+for it: `workers_dev: false` and a `routes` entry for `scrobbler.suvir.net`. To deploy
+somewhere else, change `PUBLIC_BASE_URL` in `vars`, the `routes` entry (or set
+`workers_dev: true` and delete it), **and** both URLs in the Sonos portal — they must match
+byte for byte.
 
 ### 1. Sonos — a new Control Integration
 
 Portal: <https://integration.sonos.com/integrations>
 
 1. Sign in with your Sonos account.
-2. **New control integration.** Do *not* edit the existing *PhoneThing* integration.
-3. Enter a **Name**, **Description** and **Category**.
-   - The name is what users see on the Sonos consent screen.
-   - ⚠️ The **Company Name** field appears to be organization-level and pre-fills with
-     "PhoneThing". Confirm whether editing it renames the existing integration before you
-     touch it. If unsure, leave it.
+2. **New control integration.** Create a new one rather than editing any integration that
+   already exists on the account.
+3. Enter **Name** `Scrobbler for Sonos`, a **Description** and a **Category**.
+   - The name is what users see on the Sonos consent screen, so it must read as this
+     product and nothing else.
+   - ⚠️ The **Company Name** field appears to be organization-level and is shared with
+     every other integration on the account. Confirm whether editing it renames those
+     before you touch it. If unsure, leave it.
 4. **Continue** → enter a key name (e.g. `scrobbler-prod`) → **Save**.
 5. Copy the **Client ID** and **Client Secret**. The secret is shown once.
 6. **Add redirect URI** → `https://scrobbler.suvir.net/auth/sonos/callback`
@@ -85,6 +89,12 @@ Put the printed `database_id` into `wrangler.jsonc`, then apply the schema and s
 ```bash
 npm run db:remote
 ```
+
+That applies **every** file in `migrations/` in order, not just the first — the two later
+migrations add columns the status page reads, and a database missing them fails at runtime
+rather than at deploy. The `ALTER TABLE` statements in them are not idempotent, so the
+script is a first-apply tool: running it twice stops on "duplicate column name", which is
+the correct outcome for an already-migrated database.
 
 ```bash
 for s in SONOS_CLIENT_ID SONOS_CLIENT_SECRET LASTFM_API_KEY LASTFM_API_SECRET TOKEN_ENCRYPTION_KEY SCROBBLE_KEY_SALT SESSION_SECRET; do npx wrangler secret put "$s"; done
@@ -158,7 +168,11 @@ rejects a replayed request carrying different content.
 
 | Path | |
 |---|---|
-| `src/index.ts` | routing and the scheduled renewal sweep |
+| `src/index.ts` | routing, the origin check, and the scheduled renewal sweep |
+| `src/lib/http.ts` | response helpers, the security headers, the same-origin check |
+| `src/lib/identity.ts` | the product name, version and User-Agent, in one place |
+| `src/routes/settings.ts` | the two playback-source opt-outs |
+| `public/` | the front page, privacy and terms pages, 404, icon, manifest |
 | `src/scrobble/session.ts` | the anchored clock — **the core of the service** |
 | `src/scrobble/rules.ts` | Last.fm's thresholds |
 | `src/scrobble/queue.ts` | durable queue with backoff, batch bisection, hashed dedupe |
@@ -172,7 +186,7 @@ rejects a replayed request carrying different content.
 | `src/testing/replay.ts` | the event replay harness — see below |
 
 `target.ts`, `queue.ts`, `lastfm-client.ts`, `listenbrainz-client.ts` and `lib/musicbrainz.ts`
-are ported from the Spinledger desktop app along with their test suites. `queue.ts` gained an
+are ported from a desktop scrobbler along with their test suites. `queue.ts` gained an
 injectable dedupe key so this deployment can store HMACs instead of track titles.
 
 ### Testing against reality, not against fixtures
@@ -238,3 +252,40 @@ deletes the user row that every other table cascades from.
 
 **§2(b)**'s separate-commercial-license requirement applies to the **LAN** APIs, not the Cloud
 ones this service uses. §2(c) may still require an additional license for commercial use.
+
+---
+
+## Public endpoints
+
+| | |
+|---|---|
+| `GET /` | the whole product: link accounts, see status, change settings |
+| `GET /privacy`, `GET /terms` | what is stored and under what terms |
+| `GET /healthz` | round-trips encryption and both HMAC keys, touches D1 |
+| `POST /webhooks/sonos` | the Sonos event callback |
+| `/auth/sonos/*`, `/auth/lastfm/*`, `POST /auth/listenbrainz` | linking |
+| `GET /api/account`, `DELETE /api/account` | status, and delete everything |
+| `GET|PUT /api/settings` | radio and cast-playback opt-outs |
+| `POST /api/resync` | re-discover rooms and re-subscribe |
+
+Every response carries a content security policy that forbids remote script, style,
+images and connections, plus `frame-ancestors 'none'` — the dashboard has a
+delete-everything button, and clickjacking it is unrecoverable. Every state-changing
+method is refused unless its `Origin` is this site, on top of the `SameSite=Lax` cookie.
+
+## Before opening signups
+
+- [ ] `npm test` and `npm run type-check` clean.
+- [ ] `npm run db:remote` has applied **all** of `migrations/`, not just `0001`.
+- [ ] All seven secrets set (`wrangler secret list`), and `GET /healthz` returns `ok` —
+      not just 200, the body's `status`.
+- [ ] Sonos portal: redirect URI and Event Callback URL both point at the deployed
+      origin, exactly. A trailing slash difference fails the OAuth exchange.
+- [ ] Last.fm portal: callback URL matches, homepage set.
+- [ ] Link a real account end to end, play a track, and confirm **Last scrobble** moves
+      on the status page. A green tick with `never` next to it means the pipeline is
+      not connected.
+- [ ] Confirm the zero-retention design with Sonos developer support before opening
+      signups — the legal notes below are why.
+- [ ] `TOKEN_ENCRYPTION_KEY` is backed up somewhere you will still have it in a year.
+      Rotating it locks every existing user out permanently.

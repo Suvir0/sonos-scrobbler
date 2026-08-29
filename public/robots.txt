@@ -1,0 +1,8 @@
+# Only the front page is worth indexing. Everything under /auth and /api is either a
+# redirect into somebody's OAuth flow or a signed-in response, and a crawler following
+# them just generates errors.
+User-agent: *
+Allow: /$
+Disallow: /auth/
+Disallow: /api/
+Disallow: /webhooks/

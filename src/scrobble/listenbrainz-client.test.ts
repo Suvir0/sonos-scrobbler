@@ -45,7 +45,7 @@ describe('buildListenPayload', () => {
         artist_name: 'Sharon Van Etten',
         track_name: 'Seventeen',
         release_name: 'Remind Me Tomorrow',
-        additional_info: { media_player: 'Spinledger' }
+        additional_info: { media_player: 'Scrobbler for Sonos' }
       }
     });
   });

@@ -1,6 +1,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { encryptSecret, sonosEventSignature } from './lib/crypto.js';
+import { createSession, SESSION_COOKIE } from './lib/session.js';
 import { applySchema, resetTables } from './testing/schema.js';
 
 const CLIENT_ID = 'test-client-id';
@@ -233,10 +234,14 @@ describe('routing', () => {
     });
   });
 
+  // A JSON 401 rather than a redirect: the dashboard polls this endpoint, and a 302 to
+  // an HTML page reads as a successful response until the JSON parse fails.
   it('refuses account access without a session', async () => {
     const response = await SELF.fetch('https://example.com/api/account', { redirect: 'manual' });
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toContain('signin_required');
+    expect(response.status).toBe(401);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      'signin_required'
+    );
   });
 
   it('sends a user to Sonos to authorize, with a single-use state', async () => {
@@ -263,5 +268,85 @@ describe('routing', () => {
     );
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toContain('sonos_state');
+  });
+});
+
+
+describe('hardening', () => {
+  beforeEach(async () => {
+    await applySchema();
+    await resetTables();
+  });
+
+  async function signedIn(): Promise<string> {
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+      .bind(USER_ID, Date.now())
+      .run();
+    return `${SESSION_COOKIE}=${await createSession(env, USER_ID)}`;
+  }
+
+  // The page is a single document whose styles and script are inline, so the policy can
+  // forbid every remote origin outright. `frame-ancestors 'none'` is the load-bearing
+  // one: the dashboard has a delete-everything button.
+  it('applies a content security policy to the page itself, not just to API responses', async () => {
+    const response = await SELF.fetch('https://example.com/');
+    const csp = response.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('strict-transport-security')).toContain('max-age=');
+  });
+
+  // SameSite=Lax already blocks this in a browser that implements it strictly, but Lax
+  // has to stay for the OAuth callbacks, so the Origin check is what actually closes it.
+  it('refuses a state-changing request carrying somebody else\'s Origin', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/account', {
+      method: 'DELETE',
+      headers: { cookie, origin: 'https://attacker.example' }
+    });
+    expect(response.status).toBe(403);
+    // And the account is still there.
+    expect(
+      await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(USER_ID).first()
+    ).toBeTruthy();
+  });
+
+  it('accepts the same request from its own origin', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, origin: 'https://example.com', 'content-type': 'application/json' },
+      body: JSON.stringify({ scrobbleRadio: false })
+    });
+    expect(response.status).toBe(200);
+  });
+
+  // Both columns shipped in the first migration and neither was reachable, so every
+  // account ran on the defaults. The round trip is what proves they now are.
+  it('stores and reads back the playback-source settings', async () => {
+    const cookie = await signedIn();
+
+    expect(
+      await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
+    ).toEqual({ scrobbleRadio: true, allowHandoff: false });
+
+    await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ scrobbleRadio: false })
+    });
+
+    // A partial update leaves the key it did not mention alone.
+    expect(
+      await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
+    ).toEqual({ scrobbleRadio: false, allowHandoff: false });
+  });
+
+  // A wrong verb on a known path used to fall through to the assets binding and come
+  // back as the HTML front page with a 200 on it.
+  it('answers a known API path with the wrong method as 405, not as the front page', async () => {
+    const response = await SELF.fetch('https://example.com/api/settings', { method: 'DELETE' });
+    expect(response.status).toBe(405);
   });
 });

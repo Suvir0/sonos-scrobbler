@@ -3,11 +3,32 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { RequestBudget } from './sonos/budget.js';
 import { SonosClient } from './sonos/client.js';
 import { applySchema, resetTables } from './testing/schema.js';
-import { MIN_TOPOLOGY_SYNC_INTERVAL_MS, syncHousehold } from './subscriptions.js';
+import {
+  MIN_TOPOLOGY_SYNC_INTERVAL_MS,
+  RETRY_BASE_MS,
+  retryDelayMs,
+  subscriptionId,
+  syncHousehold
+} from './subscriptions.js';
 
 const USER = 'u1';
 const HH = 'HH_1';
 const T0 = 1_800_000_000_000;
+
+/** A client whose every subscribe attempt fails, to exercise the failure path. */
+function failingClient(groups: readonly { id: string; name?: string }[]) {
+  return new SonosClient({
+    baseUrl: 'https://api.ws.sonos.com/control/api/v1',
+    accessToken: async () => 'token',
+    budget: new RequestBudget(),
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({ groups }), { status: 200 });
+      }
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch
+  });
+}
 
 /** Records every path the client asks Sonos for. */
 function recordingClient() {
@@ -123,5 +144,72 @@ describe('syncHousehold', () => {
 
     expect(result.throttled).toBe(false);
     expect(paths.length).toBeGreaterThan(0);
+  });
+
+  // The starvation bug. `renewDue` takes the hundred rows with the earliest
+  // `next_renewal_at`, so a row whose failed subscribe leaves that column untouched is
+  // reselected every fifteen minutes forever — spending a request each time and, once
+  // there are enough of them, filling the slice ahead of rows that would have renewed.
+  it('backs a failed subscribe off instead of leaving it due', async () => {
+    // Establish the rows first, so there is something to update.
+    await syncHousehold(env, USER, HH, recordingClient().client, T0);
+
+    const id = subscriptionId('group', 'G1', 'playback');
+    await syncHousehold(env, USER, HH, failingClient([{ id: 'G1', name: 'Den' }]), T0 + 60_000, {
+      force: true
+    });
+
+    const row = await env.DB.prepare(
+      'SELECT failure_count, next_renewal_at, last_error FROM subscriptions WHERE id = ?'
+    )
+      .bind(id)
+      .first<{ failure_count: number; next_renewal_at: number; last_error: string | null }>();
+
+    expect(row?.failure_count).toBe(1);
+    expect(row?.last_error).toContain('500');
+    expect(row?.next_renewal_at).toBe(T0 + 60_000 + RETRY_BASE_MS);
+  });
+
+  // And the backoff has to grow, or "keeps retrying" becomes "retries twelve times an
+  // hour forever" for a subscription that will never succeed.
+  it('doubles the backoff on each successive failure', async () => {
+    await syncHousehold(env, USER, HH, recordingClient().client, T0);
+    const id = subscriptionId('group', 'G1', 'playback');
+
+    await syncHousehold(env, USER, HH, failingClient([{ id: 'G1' }]), T0 + 60_000, {
+      force: true
+    });
+    await syncHousehold(env, USER, HH, failingClient([{ id: 'G1' }]), T0 + 120_000, {
+      force: true
+    });
+
+    const row = await env.DB.prepare(
+      'SELECT failure_count, next_renewal_at FROM subscriptions WHERE id = ?'
+    )
+      .bind(id)
+      .first<{ failure_count: number; next_renewal_at: number }>();
+
+    expect(row?.failure_count).toBe(2);
+    // Second failure, so the delay is computed from a stored count of 1.
+    expect(row?.next_renewal_at).toBe(T0 + 120_000 + retryDelayMs(1));
+  });
+
+  // Two subscribes per group and no internal ceiling meant one large household could
+  // spend the entire run's budget and then keep going, against a quota shared with the
+  // live webhook path.
+  it('stops inside a household once its call budget is spent', async () => {
+    const groups = Array.from({ length: 20 }, (_, index) => ({ id: `G${index}` }));
+    const { client, paths } = recordingClient();
+
+    const result = await syncHousehold(env, USER, HH, client, T0, {
+      subscribeHousehold: false,
+      knownGroups: groups,
+      callBudget: 6
+    });
+
+    expect(result.budgetExhausted).toBe(true);
+    // Three groups at two subscribes each, then the check refuses the fourth.
+    expect(paths.length).toBe(6);
+    expect(result.groupsSeen).toBe(20);
   });
 });

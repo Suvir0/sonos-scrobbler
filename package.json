@@ -1,6 +1,6 @@
 {
-  "name": "sonos-scrobbler",
-  "version": "0.1.0",
+  "name": "scrobbler-for-sonos",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,8 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit",
-    "db:local": "wrangler d1 execute sonos-scrobbler --local --file=migrations/0001_init.sql",
-    "db:remote": "wrangler d1 execute sonos-scrobbler --remote --file=migrations/0001_init.sql"
+    "db:local": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --local --file=\"$f\" || exit 1; done",
+    "db:remote": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --remote -y --file=\"$f\" || exit 1; done"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.8",

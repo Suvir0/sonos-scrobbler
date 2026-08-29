@@ -43,9 +43,15 @@ export const RENEWAL_INTERVAL_MS = 24 * 60 * 60_000;
  */
 export const RENEWAL_CALL_BUDGET = 300;
 
+/** First retry delay for a subscription that would not renew. */
+export const RETRY_BASE_MS = 5 * 60_000;
+
+/** Ceiling on the backoff, so a failing subscription keeps trying rather than giving up. */
+export const RETRY_CAP_MS = 6 * 60 * 60_000;
+
 /** Backoff for a subscription that will not renew, capped so it keeps trying. */
-function retryDelayMs(failureCount: number): number {
-  return Math.min(6 * 60 * 60_000, 5 * 60_000 * 2 ** Math.min(failureCount, 6));
+export function retryDelayMs(failureCount: number): number {
+  return Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** Math.min(failureCount, 6));
 }
 
 export type Namespace = 'groups' | 'playback' | 'playbackMetadata';
@@ -85,16 +91,31 @@ async function recordSuccess(
     .run();
 }
 
+/**
+ * Records a failed subscribe and pushes the row's next attempt out.
+ *
+ * The delay is computed in SQL from the row's own `failure_count` rather than passed
+ * in, because the caller does not know it — and a fixed five minutes (which is what
+ * `retryDelayMs(0)` gave every failure regardless of history) means a subscription that
+ * can never succeed is retried twelve times an hour forever. That is the shape of
+ * starvation this whole file exists to avoid: `renewDue` orders by `next_renewal_at`
+ * and takes the first hundred, so rows that never move to the back of the queue
+ * eventually fill the slice and delay renewals that would have worked.
+ *
+ * `1 << MIN(failure_count, 6)` is `retryDelayMs`'s doubling, expressed in SQLite. The
+ * column still holds its pre-increment value inside this statement, which is the same
+ * argument `retryDelayMs` takes.
+ */
 async function recordFailure(env: Env, id: string, error: unknown, nowMs: number): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await env.DB.prepare(
     `UPDATE subscriptions
         SET failure_count = failure_count + 1,
             last_error = ?,
-            next_renewal_at = ?
+            next_renewal_at = ? + MIN(?, ? * (1 << MIN(failure_count, 6)))
       WHERE id = ?`
   )
-    .bind(message.slice(0, 500), nowMs + retryDelayMs(0), id)
+    .bind(message.slice(0, 500), nowMs, RETRY_CAP_MS, RETRY_BASE_MS, id)
     .run();
 }
 
@@ -127,6 +148,16 @@ export interface SyncOptions {
   knownGroups?: readonly { id: string; name?: string }[];
   /** Bypass the interval floor. Only for a user-initiated resync. */
   force?: boolean;
+  /**
+   * Most Sonos requests this one call may spend.
+   *
+   * Without it a household's group loop is unbounded: two subscribes per group, so a
+   * household with two hundred groups spends four hundred requests inside a single
+   * call, past the whole run's budget, against a quota shared with live webhook
+   * traffic. Stopping early is safe because every group not reached keeps its existing
+   * `next_renewal_at` and is simply picked up by the next sweep.
+   */
+  callBudget?: number;
 }
 
 export interface SyncResult {
@@ -138,6 +169,8 @@ export interface SyncResult {
   vanished: string[];
   /** True when the interval floor suppressed this sync entirely. */
   throttled: boolean;
+  /** True when `callBudget` ran out before every group was reached. */
+  budgetExhausted: boolean;
 }
 
 /**
@@ -158,7 +191,8 @@ export async function syncHousehold(
     subscribeHousehold = true,
     onlyMissing = false,
     knownGroups,
-    force = false
+    force = false,
+    callBudget = Number.POSITIVE_INFINITY
   } = options;
   const result: SyncResult = {
     groupsSeen: 0,
@@ -166,7 +200,8 @@ export async function syncHousehold(
     callsUsed: 0,
     errors: [],
     vanished: [],
-    throttled: false
+    throttled: false,
+    budgetExhausted: false
   };
 
   // The interval floor. Checked before any API call, so a storm of events costs one
@@ -210,6 +245,15 @@ export async function syncHousehold(
   } catch (error) {
     result.callsUsed += 1;
     result.errors.push(`groups: ${error instanceof Error ? error.message : String(error)}`);
+    // Back this row off. Without it the row stays exactly as due as it was, so the next
+    // sweep selects it again fifteen minutes later, and the one after that, spending a
+    // request each time on something that is not going to start working on its own.
+    await recordFailure(
+      env,
+      subscriptionId('household', householdId, 'groups'),
+      error,
+      nowMs
+    );
   }
 
   // A groups event already carries the whole topology, so re-fetching it is a wasted
@@ -259,6 +303,11 @@ export async function syncHousehold(
 
     if (onlyMissing && existing.has(group.id)) continue;
 
+    if (result.callsUsed >= callBudget) {
+      result.budgetExhausted = true;
+      break;
+    }
+
     for (const namespace of ['playback', 'playbackMetadata'] as const) {
       try {
         if (namespace === 'playback') await client.subscribePlayback(group.id);
@@ -288,6 +337,10 @@ export async function syncHousehold(
           continue;
         }
         result.errors.push(`${group.id}/${namespace}: ${detail}`);
+        // Same reason as the household anchor above: a row that keeps its old
+        // `next_renewal_at` is retried every sweep forever and crowds out rows that
+        // would have succeeded.
+        await recordFailure(env, subscriptionId('group', group.id, namespace), error, nowMs);
       }
     }
   }
@@ -375,10 +428,19 @@ export async function renewDue(
     report.considered += 1;
     try {
       const client = await clientForUser(env, row.user_id);
-      const result = await syncHousehold(env, row.user_id, row.household_id, client, nowMs);
+      const result = await syncHousehold(env, row.user_id, row.household_id, client, nowMs, {
+        callBudget: budget - report.callsUsed
+      });
       report.callsUsed += result.callsUsed;
       report.renewed += result.subscribed;
       if (result.errors.length) report.failed += result.errors.length;
+      // One household big enough to spend the whole budget ends the run here rather
+      // than after it has already overspent. Its remaining groups keep their renewal
+      // times and are first in line next sweep.
+      if (result.budgetExhausted) {
+        report.truncated = true;
+        break;
+      }
     } catch (error) {
       report.failed += 1;
       if (error instanceof SonosGrantMissing) {

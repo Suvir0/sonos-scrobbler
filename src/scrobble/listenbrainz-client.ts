@@ -15,6 +15,7 @@
  * and tests never open a socket.
  */
 
+import { APP_NAME, USER_AGENT } from '../lib/identity.js';
 import {
   SubmissionError,
   type NowPlayingTrack,
@@ -47,7 +48,7 @@ export interface ListenBrainzDependencies {
 /** Shapes a track the way ListenBrainz's `track_metadata` expects. */
 export function buildListenPayload(track: ScrobbleTrack | NowPlayingTrack): Record<string, unknown> {
   const durationSeconds = track.durationSeconds;
-  const additional: Record<string, unknown> = { media_player: 'Spinledger' };
+  const additional: Record<string, unknown> = { media_player: APP_NAME };
   if (durationSeconds !== undefined && Number.isFinite(durationSeconds)) {
     additional['duration_ms'] = Math.round(durationSeconds * 1_000);
   }
@@ -183,6 +184,7 @@ export class ListenBrainzClient implements ScrobbleTarget {
         headers: {
           Authorization: `Token ${options.token}`,
           Accept: 'application/json',
+          'User-Agent': USER_AGENT,
           ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' })
         },
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),

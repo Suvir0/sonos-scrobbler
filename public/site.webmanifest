@@ -1,0 +1,12 @@
+{
+  "name": "Scrobbler for Sonos",
+  "short_name": "Scrobbler",
+  "description": "Scrobble everything your Sonos speakers play to Last.fm and ListenBrainz.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf8f5",
+  "theme_color": "#faf8f5",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
