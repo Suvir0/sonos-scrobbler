@@ -185,8 +185,8 @@ rejects a replayed request carrying different content.
 | `src/sonos/budget.ts` | our own request ceiling, below Sonos's shared quota |
 | `src/testing/replay.ts` | the event replay harness — see below |
 
-`target.ts`, `queue.ts`, `lastfm-client.ts`, `listenbrainz-client.ts` and `lib/musicbrainz.ts`
-are ported from a desktop scrobbler along with their test suites. `queue.ts` gained an
+`target.ts`, `queue.ts`, `lastfm-client.ts` and `listenbrainz-client.ts` are ported from a
+desktop scrobbler along with their test suites. `queue.ts` gained an
 injectable dedupe key so this deployment can store HMACs instead of track titles.
 
 ### Testing against reality, not against fixtures

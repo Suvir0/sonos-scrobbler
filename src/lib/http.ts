@@ -15,16 +15,6 @@ export function redirect(location: string, headers: HeadersInit = {}): Response 
   return new Response(null, { status: 302, headers: { location, ...headers } });
 }
 
-/** Escapes text destined for an HTML page. */
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 /**
  * Headers applied to every response the Worker sends.
  *

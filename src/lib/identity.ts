@@ -18,7 +18,10 @@ export const APP_URL = 'https://scrobbler.suvir.net';
 /**
  * Sent on every outbound request.
  *
- * ListenBrainz and MusicBrainz both ask for a contactable User-Agent, and Last.fm uses
- * it when a key has to be traced back to an application. The URL is the contact point.
+ * ListenBrainz asks for a contactable User-Agent and Last.fm uses one when a key has to
+ * be traced back to an application. The URL is that contact point, which is why it is
+ * this constant and not `env.PUBLIC_BASE_URL`: a staging deployment or a fork running on
+ * some other hostname should still route a question about this software back to the
+ * project, not to whichever origin happens to be serving it.
  */
 export const USER_AGENT = `ScrobblerForSonos/${APP_VERSION} ( ${APP_URL} )`;

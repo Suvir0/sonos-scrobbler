@@ -46,14 +46,20 @@ export async function updateSettings(
   }
 
   // A partial update, so the page can send one toggle without having to know the other.
-  // An absent key keeps its stored value; a present key must actually be a boolean,
-  // because coercing `"false"` to true is the kind of bug that silently re-enables
-  // something a user turned off.
+  // An absent key keeps its stored value. A key that is present but is not a boolean is
+  // refused rather than ignored: coercing `"false"` to true would silently re-enable
+  // something a user turned off, and ignoring it would answer 200 with the old value —
+  // which the page reports as "Saved" while the setting did not move.
+  for (const key of ['scrobbleRadio', 'allowHandoff'] as const) {
+    if (key in body && typeof body[key] !== 'boolean') {
+      return problem(400, 'bad_value', `${key} must be true or false.`);
+    }
+  }
+
   const current = await readSettings(env, userId);
   const next: Settings = {
-    scrobbleRadio:
-      typeof body.scrobbleRadio === 'boolean' ? body.scrobbleRadio : current.scrobbleRadio,
-    allowHandoff: typeof body.allowHandoff === 'boolean' ? body.allowHandoff : current.allowHandoff
+    scrobbleRadio: body.scrobbleRadio ?? current.scrobbleRadio,
+    allowHandoff: body.allowHandoff ?? current.allowHandoff
   };
 
   await env.DB.prepare('UPDATE users SET scrobble_radio = ?, allow_handoff = ? WHERE id = ?')

@@ -343,6 +343,31 @@ describe('hardening', () => {
     ).toEqual({ scrobbleRadio: false, allowHandoff: false });
   });
 
+  // A 200 carrying the old value is worse than an error: the page reports "Saved" and
+  // the setting has not moved.
+  it('refuses a settings value that is not a boolean rather than ignoring it', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ scrobbleRadio: 'false' })
+    });
+    expect(response.status).toBe(400);
+    expect(
+      await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
+    ).toEqual({ scrobbleRadio: true, allowHandoff: false });
+  });
+
+  it('refuses a body that is not a JSON object', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: 'not json'
+    });
+    expect(response.status).toBe(400);
+  });
+
   // A wrong verb on a known path used to fall through to the assets binding and come
   // back as the HTML front page with a 200 on it.
   it('answers a known API path with the wrong method as 405, not as the front page', async () => {

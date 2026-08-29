@@ -8,7 +8,7 @@
  * every trace, including the Durable Objects that D1's cascade cannot reach.
  */
 
-import type { Env } from './../env.js';
+import type { Env } from '../env.js';
 import { json } from '../lib/http.js';
 import { log } from '../lib/log.js';
 import { clientForUser } from '../sonos/account.js';
