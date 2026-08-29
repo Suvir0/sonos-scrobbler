@@ -1,0 +1,175 @@
+/**
+ * The Sonos event endpoint.
+ *
+ * The single most important property of this handler is that it answers fast. Sonos
+ * retries a failed delivery once a second, three times, and then discards the event
+ * permanently — there is no replay and no dead-letter queue on their side, so a slow
+ * or erroring endpoint is a silently missed scrobble. Everything past verification
+ * therefore happens in `waitUntil`, after the 200 has gone out.
+ *
+ * It also always answers 200, even for events it rejects. A 4xx would buy nothing —
+ * Sonos does not act on the status beyond retrying — and would turn every unexpected
+ * payload into three more deliveries of the same unexpected payload.
+ */
+
+import type { Env } from '../env.js';
+import {
+  isFreshSequence,
+  isKnownNamespace,
+  readEventBody,
+  readEventHeaders,
+  verifySignature,
+  type SonosEventHeaders
+} from '../sonos/events.js';
+import type { GroupsStatus, MetadataStatus, PlaybackStatus } from '../sonos/types.js';
+import { clientForUser } from '../sonos/account.js';
+import { syncHousehold, subscriptionId } from '../subscriptions.js';
+import { log } from '../lib/log.js';
+
+const OK = new Response(null, { status: 200 });
+
+export async function handleSonosWebhook(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  const headers = readEventHeaders(request);
+  if (!headers) {
+    log(env, 'warn', 'sonos.event.malformed-headers');
+    return OK;
+  }
+
+  if (
+    !(await verifySignature(headers, {
+      clientId: env.SONOS_CLIENT_ID,
+      clientSecret: env.SONOS_CLIENT_SECRET
+    }))
+  ) {
+    // Not from Sonos, or our client secret is wrong. Both are worth seeing in logs;
+    // neither is worth telling the caller about.
+    log(env, 'warn', 'sonos.event.bad-signature', { namespace: headers.namespace });
+    return OK;
+  }
+
+  if (!isKnownNamespace(headers.namespace)) return OK;
+
+  const body = await readEventBody<unknown>(request);
+  if (body === undefined) return OK;
+
+  // Answer now; do the work after. Nothing below this line may delay the response.
+  ctx.waitUntil(dispatch(env, headers, body).catch((error: unknown) => {
+    log(env, 'error', 'sonos.event.failed', {
+      namespace: headers.namespace,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }));
+
+  return OK;
+}
+
+async function dispatch(env: Env, headers: SonosEventHeaders, body: unknown): Promise<void> {
+  const nowMs = Date.now();
+  const targetId = headers.targetValue;
+
+  const scope = headers.namespace === 'groups' ? 'household' : 'group';
+  const id = subscriptionId(scope, targetId, headers.namespace as never);
+
+  const row = await env.DB.prepare(
+    'SELECT user_id, household_id, last_seq_id FROM subscriptions WHERE id = ?'
+  )
+    .bind(id)
+    .first<{ user_id: string; household_id: string; last_seq_id: number | null }>();
+
+  if (!row) {
+    // An event for something we no longer track — a pruned group, an unlinked account.
+    log(env, 'info', 'sonos.event.unknown-subscription', { id });
+    return;
+  }
+
+  // The signature covers only headers, not the body, so a captured request could be
+  // replayed carrying different content. The sequence high-water mark is what stops it.
+  if (!isFreshSequence(headers.seqId, row.last_seq_id ?? undefined)) {
+    log(env, 'warn', 'sonos.event.stale-sequence', { id, seqId: headers.seqId });
+    return;
+  }
+  // last_event_at rides along on an UPDATE that was happening anyway, and is what
+  // lets the status page distinguish "nobody is listening" from "nothing is arriving".
+  await env.DB.prepare('UPDATE subscriptions SET last_seq_id = ?, last_event_at = ? WHERE id = ?')
+    .bind(Number(headers.seqId), nowMs, id)
+    .run();
+
+  if (headers.namespace === 'groups') {
+    // The topology changed: subscribe any brand new group immediately rather than
+    // waiting for the next renewal, and stop paying for ones that vanished.
+    //
+    // Three things here exist solely to avoid a feedback loop that took the service to
+    // 993 requests in 35 seconds and tripped the application-wide quota:
+    //
+    //  - `subscribeHousehold: false` — subscribing the `groups` namespace makes Sonos
+    //    deliver a groups event, so doing it here is the loop, directly.
+    //  - `knownGroups` — the event body already carries the topology, so re-fetching it
+    //    spends a request per event for information we were just handed.
+    //  - `onlyMissing` — an unchanged topology then costs no Sonos requests at all.
+    const payload = body as GroupsStatus;
+    const client = await clientForUser(env, row.user_id);
+    const result = await syncHousehold(env, row.user_id, row.household_id, client, nowMs, {
+      subscribeHousehold: false,
+      onlyMissing: true,
+      ...(payload.groups ? { knownGroups: payload.groups } : {})
+    });
+    log(env, 'info', 'sonos.groups.event', {
+      householdId: row.household_id,
+      groups: result.groupsSeen,
+      subscribed: result.subscribed,
+      throttled: result.throttled,
+      callsUsed: result.callsUsed
+    });
+    return;
+  }
+
+  const session = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(targetId));
+
+  // Cheap and idempotent, and it means a session created by an event rather than by
+  // the link flow still knows whose it is and what their source policy is.
+  const settings = await env.DB.prepare(
+    'SELECT scrobble_radio, allow_handoff FROM users WHERE id = ?'
+  )
+    .bind(row.user_id)
+    .first<{ scrobble_radio: number; allow_handoff: number }>();
+
+  await session.initialize({
+    userId: row.user_id,
+    householdId: row.household_id,
+    groupId: targetId,
+    allowRadio: (settings?.scrobble_radio ?? 1) === 1,
+    allowHandoff: (settings?.allow_handoff ?? 0) === 1
+  });
+
+  const outcome =
+    headers.namespace === 'playback'
+      ? await session.onPlaybackStatus(body as PlaybackStatus, nowMs)
+      : await session.onMetadataStatus(body as MetadataStatus, nowMs);
+
+  if (outcome.nowPlaying) {
+    const queue = env.USER_QUEUES.get(env.USER_QUEUES.idFromName(row.user_id));
+    // Fire and forget: a now-playing update expires on its own and must never be queued.
+    await queue.announce(row.user_id, outcome.nowPlaying).catch(() => undefined);
+  }
+
+  // Deliberately logs that a scrobble happened, not what it was. A log line naming the
+  // track would be exactly the durable record of listening this service promises not
+  // to keep.
+  if (outcome.scrobbled) {
+    await env.DB.prepare('UPDATE users SET last_scrobble_at = ? WHERE id = ?')
+      .bind(nowMs, row.user_id)
+      .run();
+    log(env, 'info', 'scrobble.enqueued', { groupId: targetId });
+  }
+  if (outcome.declined) log(env, 'info', 'scrobble.declined', {
+    groupId: targetId,
+    reason: outcome.declined
+  });
+}
+
+/** Exported for the reconciliation sweep, which needs the same group-status handling. */
+export type { GroupsStatus };

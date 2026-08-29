@@ -1,0 +1,12 @@
+-- Guards against a topology-event feedback loop.
+--
+-- Subscribing to a household's `groups` namespace causes Sonos to deliver a groups
+-- event to the new subscriber. If the handler for that event re-subscribes, it
+-- triggers another event, and the cycle runs until the API quota stops it — which it
+-- did, at 993 requests in 35 seconds. The quota is per-application and shared by every
+-- user, so one household can deny service to all of them.
+--
+-- The structural fix is in code (a groups event never re-subscribes the household
+-- namespace). This column is the backstop: a hard floor on how often any household's
+-- topology may be re-synced, regardless of how many events arrive.
+ALTER TABLE households ADD COLUMN last_sync_at INTEGER;

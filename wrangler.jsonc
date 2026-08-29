@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sonos-scrobbler",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // suvir.net is on Cloudflare (nameservers gabriel/harleigh.ns.cloudflare.com), so the
+  // custom domain route provisions its own DNS record and CA-signed certificate — which
+  // is what the Sonos event callback URL requires.
+  "workers_dev": false,
+  "routes": [{ "pattern": "scrobbler.suvir.net", "custom_domain": true }],
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PUBLIC_BASE_URL": "https://scrobbler.suvir.net",
+    "SONOS_AUTHORIZE_URL": "https://api.sonos.com/login/v3/oauth",
+    "SONOS_TOKEN_URL": "https://api.sonos.com/login/v3/oauth/access",
+    "SONOS_API_URL": "https://api.ws.sonos.com/control/api/v1",
+    "LASTFM_AUTH_URL": "https://www.last.fm/api/auth/",
+    "LISTENBRAINZ_API_URL": "https://api.listenbrainz.org"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sonos-scrobbler",
+      "database_id": "a06b7c56-1e06-4525-b2bf-f99f0de52ad5"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "OAUTH_STATES", "class_name": "OAuthState" },
+      { "name": "GROUP_SESSIONS", "class_name": "GroupSession" },
+      { "name": "USER_QUEUES", "class_name": "UserQueue" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["OAuthState", "GroupSession", "UserQueue"]
+    }
+  ],
+
+  // Sharded subscription renewal. Sonos subscriptions lapse after 3 days; this sweeps
+  // a bounded slice each run so the app-wide 1,000 req/min ceiling is never approached.
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

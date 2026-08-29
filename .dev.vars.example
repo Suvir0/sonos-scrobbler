@@ -1,0 +1,11 @@
+# Copy to .dev.vars for local `wrangler dev`. Never commit .dev.vars.
+SONOS_CLIENT_ID=
+SONOS_CLIENT_SECRET=
+LASTFM_API_KEY=
+LASTFM_API_SECRET=
+# openssl rand -base64 32
+TOKEN_ENCRYPTION_KEY=
+# openssl rand -base64 32
+SCROBBLE_KEY_SALT=
+# openssl rand -base64 32
+SESSION_SECRET=
