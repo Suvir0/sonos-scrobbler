@@ -15,7 +15,9 @@
   --sunk: #f2efe9;
   --ink: #191713;
   --ink-soft: #6a655c;
-  --ink-faint: #948e83;
+  /* 4.8:1 on --paper. Anything lighter fails AA for the footer text and the
+     section eyebrows, which are 12.8-13.6px and so get no large-text exception. */
+  --ink-faint: #746e63;
   --line: #e4dfd6;
   --line-strong: #d3ccc0;
 
@@ -43,7 +45,8 @@
     --sunk: #262319;
     --ink: #f4f1ea;
     --ink-soft: #a8a298;
-    --ink-faint: #7d776d;
+    /* 5.0:1 on the dark --paper, for the same reason. */
+    --ink-faint: #8a8378;
     --line: #302c24;
     --line-strong: #3e3930;
 
@@ -503,7 +506,7 @@ input::placeholder {
 }
 
 .note.warn {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 pre.output {

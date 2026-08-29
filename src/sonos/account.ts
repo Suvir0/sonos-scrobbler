@@ -9,7 +9,13 @@
 import { decryptSecret, encryptSecret } from '../lib/crypto.js';
 import type { Env } from '../env.js';
 import { SonosClient } from './client.js';
-import { isExpired, refreshTokens, type SonosOAuthConfig, type SonosTokens } from './oauth.js';
+import {
+  isExpired,
+  refreshTokens,
+  SonosGrantRevoked,
+  type SonosOAuthConfig,
+  type SonosTokens
+} from './oauth.js';
 
 export interface SonosAccountRow {
   user_id: string;
@@ -46,6 +52,18 @@ export async function saveTokens(env: Env, userId: string, tokens: SonosTokens):
        updated_at        = excluded.updated_at`
   )
     .bind(userId, refreshEnc, accessEnc, tokens.expiresAtMs, now, now)
+    .run();
+  // A successful exchange or refresh is the only thing that clears the flag, so a
+  // reconnect resolves the warning on the status page without a separate write.
+  await env.DB.prepare('UPDATE sonos_accounts SET needs_reauth = 0 WHERE user_id = ?')
+    .bind(userId)
+    .run();
+}
+
+/** Marks a grant as dead, so the status page can say so rather than showing silence. */
+export async function markSonosNeedsReauth(env: Env, userId: string): Promise<void> {
+  await env.DB.prepare('UPDATE sonos_accounts SET needs_reauth = 1 WHERE user_id = ?')
+    .bind(userId)
     .run();
 }
 
@@ -92,7 +110,18 @@ export async function clientForUser(env: Env, userId: string): Promise<SonosClie
       if (!options?.force && cached && !isExpired(cached, nowMs)) return cached.accessToken;
 
       const refreshToken = await decryptSecret(row.refresh_token_enc, env.TOKEN_ENCRYPTION_KEY);
-      const fresh = await refreshTokens(config, refreshToken, { nowMs });
+      let fresh: SonosTokens;
+      try {
+        fresh = await refreshTokens(config, refreshToken, { nowMs });
+      } catch (error) {
+        // A revoked grant is reported as the same condition as a missing one, because
+        // the remedy is identical — reconnect — and every caller already handles it.
+        if (error instanceof SonosGrantRevoked) {
+          await markSonosNeedsReauth(env, userId);
+          throw new SonosGrantMissing(userId);
+        }
+        throw error;
+      }
       cached = fresh;
       await saveTokens(env, userId, fresh);
       return fresh.accessToken;

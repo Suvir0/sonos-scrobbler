@@ -181,6 +181,7 @@ rejects a replayed request carrying different content.
 | `src/sonos/events.ts` | signature verification and the replay guard |
 | `src/sonos/{oauth,account,client}.ts` | authorization, token refresh, Control API |
 | `src/subscriptions.ts` | subscribe, renew, follow group changes |
+| `migrations/0004_sonos_reauth.sql` | the flag that says a Sonos grant was revoked |
 | `src/do/` | Durable Objects: group session, user queue, OAuth state |
 | `src/sonos/budget.ts` | our own request ceiling, below Sonos's shared quota |
 | `src/testing/replay.ts` | the event replay harness — see below |
@@ -285,7 +286,61 @@ method is refused unless its `Origin` is this site, on top of the `SameSite=Lax`
 - [ ] Link a real account end to end, play a track, and confirm **Last scrobble** moves
       on the status page. A green tick with `never` next to it means the pipeline is
       not connected.
+- [ ] Decide the identity question in **Known limits** below. Every signed-out
+      reconnect currently strands an account holding live credentials its owner
+      cannot see or delete, which is in tension with the §8(b) claim on the privacy
+      page. This is the one open blocker in the code.
+- [ ] Point an uptime check at `/healthz` that alerts on the body's `status`, not just
+      on a 200, and add a Cloudflare notification on Worker error rate.
 - [ ] Confirm the zero-retention design with Sonos developer support before opening
       signups — the legal notes below are why.
 - [ ] `TOKEN_ENCRYPTION_KEY` is backed up somewhere you will still have it in a year.
       Rotating it locks every existing user out permanently.
+
+## Known limits, and why they are limits
+
+Three things a reviewer will notice. None is a bug; each is a deliberate boundary, and
+the first is the one to resolve before signups open.
+
+### Sonos is the only identity, and there is no way to re-find an account without a cookie
+
+Starting a link while signed in now carries the user through the OAuth round trip, so a
+reconnect updates the account that already exists. A user who arrives with **no session**
+— cookie cleared, thirty days elapsed, a different browser — still gets a new account,
+because nothing Sonos returns identifies the person.
+
+The obvious fix, matching on household id, is worse than the problem: a Sonos household
+can have more than one member, so adopting an existing account whose household matches
+would hand one person another person's Last.fm session key. That is not a trade worth
+making, so the code does not make it.
+
+What is left is real and unresolved: the previous account keeps a live refresh token and
+an encrypted Last.fm credential, is invisible to its owner, and cannot be reached by
+`DELETE /api/account`, which only ever deletes whoever is signed in. Two ways out, and
+one has to be chosen before public signups:
+
+- a second identity the user controls — an email magic link, say — so an account can be
+  found again without a Sonos round trip; or
+- a stable Sonos-side identifier, if developer support can name one. Nothing in the
+  Control API's households response is documented as per-user.
+
+The same gap is why two members of one household do not work today: `subscriptions.id`
+is not scoped by user and `GroupSession` is keyed by group alone, so the second person to
+link takes over the first person's subscriptions. Scoping both by user is the fix, and it
+touches the event dispatch path — worth doing deliberately rather than alongside a rename.
+
+### The request budget is per isolate, not global
+
+`src/sonos/budget.ts` refuses at 600/min and 20/sec inside one isolate. At one household
+that is the whole application. At public traffic it is not: several isolates each holding
+their own 600/min ceiling can sum past Sonos's shared 1,000/min before any one of them
+notices. A Durable Object holding the counter is the fix, and it costs a hop on every
+Sonos request — worth paying once traffic is past one isolate's worth, not before.
+
+### Nothing pages anybody
+
+`GET /healthz` round-trips the encryption and both HMAC keys and touches D1, and
+distinguishes "200 but degraded" from "ok" in the body rather than the status alone. But
+nothing watches it. Before signups: point an uptime check at it that alerts on the body's
+`status`, and add a Cloudflare notification on Worker error rate. A cron run reporting
+`failed > 0` and a `waitUntil` that throws are both `console.warn` lines and nothing more.

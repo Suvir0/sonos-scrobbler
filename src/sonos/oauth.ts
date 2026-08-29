@@ -39,6 +39,22 @@ export function buildAuthorizeUrl(config: SonosOAuthConfig, state: string): stri
   return url.toString();
 }
 
+/**
+ * Raised when Sonos says the grant itself is gone.
+ *
+ * Separated from every other token failure because the two need opposite handling: a
+ * 500 or a timeout is worth retrying for hours, and `invalid_grant` never is — the user
+ * revoked the integration or deleted their Sonos account, and no number of retries will
+ * bring it back. Retrying it anyway is how a dead account keeps spending requests
+ * against a quota shared with every working one.
+ */
+export class SonosGrantRevoked extends Error {
+  constructor(detail: string) {
+    super(`Sonos rejected the grant: ${detail}`);
+    this.name = 'SonosGrantRevoked';
+  }
+}
+
 interface TokenResponse {
   access_token?: string;
   refresh_token?: string;
@@ -73,9 +89,12 @@ async function postToken(
   });
   const parsed = (await response.json().catch(() => ({}))) as TokenResponse;
   if (!response.ok || parsed.error) {
-    throw new Error(
-      `Sonos token request failed (${response.status}): ${parsed.error_description ?? parsed.error ?? 'unknown'}`
-    );
+    const detail = parsed.error_description ?? parsed.error ?? 'unknown';
+    // `invalid_grant` is the one answer that means stop, not try again later.
+    if (parsed.error === 'invalid_grant' || response.status === 400) {
+      throw new SonosGrantRevoked(detail);
+    }
+    throw new Error(`Sonos token request failed (${response.status}): ${detail}`);
   }
   return parsed;
 }

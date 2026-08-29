@@ -281,7 +281,19 @@
           loadSettings().catch(() => undefined);
         }
 
-        if (data.households?.length) {
+        // A revoked grant beats every other state on this page: nothing works without
+        // it, and until it is reconnected the rest of the status is describing a
+        // pipeline that cannot receive anything.
+        if (data.sonos?.needsReauth) {
+          const step = document.getElementById('step-sonos');
+          delete step.dataset.done;
+          const note = step.querySelector('.note');
+          note.className = 'note warn';
+          note.textContent = 'Sonos has revoked this connection. Reconnect to start scrobbling again.';
+          note.hidden = false;
+          const action = step.querySelector('a.btn');
+          if (action) action.hidden = false;
+        } else if (data.households?.length) {
           markDone('step-sonos', `Connected — ${data.rooms.length} room(s).`);
         }
         for (const target of data.targets ?? []) {

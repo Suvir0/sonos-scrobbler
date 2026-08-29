@@ -53,8 +53,11 @@
           deliver, so a play that happens during an outage is not recoverable.
         </p>
         <p>
-          A play that is submitted and rejected by a scrobbling service stays rejected; this
-          service reports the reason on the status page rather than retrying forever.
+          A play that a scrobbling service rejects outright is discarded rather than retried
+          forever — a request it will never accept would otherwise jam every play queued
+          behind it. Individual rejections are not listed anywhere; the status page reports
+          the state of the connection, not the fate of each play. Your own Last.fm and
+          ListenBrainz history is the record of what was accepted.
         </p>
 
         <h2>Not a Sonos product</h2>

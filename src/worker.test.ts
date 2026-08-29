@@ -1,7 +1,8 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { encryptSecret, sonosEventSignature } from './lib/crypto.js';
+import { encryptSecret, sha256Hex, sonosEventSignature } from './lib/crypto.js';
 import { createSession, SESSION_COOKIE } from './lib/session.js';
+import { OAUTH_STATE_TTL_MS } from './do/oauth-state.js';
 import { applySchema, resetTables } from './testing/schema.js';
 
 const CLIENT_ID = 'test-client-id';
@@ -259,6 +260,39 @@ describe('routing', () => {
     expect(location.searchParams.get('redirect_uri')).toBe(
       `${env.PUBLIC_BASE_URL}/auth/sonos/callback`
     );
+  });
+
+  // Sonos is the only identity this service has, so a sign-in that always minted a new
+  // account meant an expired cookie stranded the old one: still holding a live refresh
+  // token and the user's Last.fm session key, and past the reach of the delete button,
+  // which only deletes whoever is signed in.
+  it('carries a signed-in user through the Sonos round trip instead of minting a second account', async () => {
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+      .bind(USER_ID, Date.now())
+      .run();
+    const cookie = `${SESSION_COOKIE}=${await createSession(env, USER_ID)}`;
+
+    const start = await SELF.fetch('https://example.com/auth/sonos/start', {
+      headers: { cookie },
+      redirect: 'manual'
+    });
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+
+    const stub = env.OAUTH_STATES.get(env.OAUTH_STATES.idFromName(await sha256Hex(state)));
+    const payload = await stub.consume(Date.now());
+    expect(payload?.userId).toBe(USER_ID);
+  });
+
+  it('issues state with no user attached when nobody is signed in', async () => {
+    const start = await SELF.fetch('https://example.com/auth/sonos/start', {
+      redirect: 'manual'
+    });
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+    const stub = env.OAUTH_STATES.get(env.OAUTH_STATES.idFromName(await sha256Hex(state)));
+    const payload = await stub.consume(Date.now());
+    expect(payload).toBeDefined();
+    expect(payload?.userId).toBeUndefined();
+    expect(Date.now() - payload!.createdAtMs).toBeLessThan(OAUTH_STATE_TTL_MS);
   });
 
   it('refuses a callback carrying an unknown state', async () => {
