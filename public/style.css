@@ -1,64 +1,98 @@
 /*
- * Scrobbler for Sonos — one stylesheet for every page.
+ * Scrobbler for Sonos.
  *
- * Mobile first throughout: the base rules are the phone layout, and the only media
- * queries widen it. That order matters here more than usual, because the page people
- * actually use this on is the one they open while standing in the room the music is
- * playing in.
+ * The design is flat and editorial: warm paper, no rounded corners anywhere, 2px rules
+ * doing the structural work, Archivo for text and IBM Plex Mono for anything that
+ * behaves like a label or a reading. One saturated block carries whatever matters most
+ * on the page — the pitch when signed out, what is playing when signed in.
+ *
+ * Mobile first. The base rules are the phone layout and the media queries only widen
+ * it, which matters here because the page people actually use is the one they open
+ * standing in the room the music is playing in.
  */
+
+/* ---------------------------------------------------------------------- fonts */
+
+/* Self-hosted. The CSP forbids remote origins, and the privacy page says there is no
+   third-party request on any page — a webfont fetch is one. See fonts/README.md. */
+@font-face {
+  font-family: 'Archivo';
+  src: url('/fonts/Archivo-variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --------------------------------------------------------------------- tokens */
 
 :root {
   color-scheme: light dark;
 
-  --paper: #faf8f5;
-  --raised: #ffffff;
-  --sunk: #f2efe9;
-  --ink: #191713;
-  --ink-soft: #6a655c;
-  /* 4.8:1 on --paper. Anything lighter fails AA for the footer text and the
-     section eyebrows, which are 12.8-13.6px and so get no large-text exception. */
-  --ink-faint: #746e63;
-  --line: #e4dfd6;
-  --line-strong: #d3ccc0;
+  --paper: #f3efe7;
+  --panel: #faf7f2;
+  --field: #ffffff;
+  --ink: #16130e;
+  --muted: #6d675c;
+  /* The design's #8a8378 reads at 3.3:1 on paper, and it carries the stat labels and
+     the footer — real text at 11-13px, so no large-text exception applies. Darkened
+     along its own hue to 4.6:1, which is the smallest change that clears AA. */
+  --faint: #716b62;
+  --rule: #d9d2c4;
+  --rule-strong: #16130e;
 
-  --accent: #a8341d;
-  --accent-ink: #ffffff;
-  --accent-wash: #fbf0ec;
-  --ok: #2c6f47;
-  --ok-wash: #eef5f0;
-  --warn: #8a5a12;
-  --warn-wash: #fbf3e6;
+  --accent: #a03123;
+  --on-accent: #f3efe7;
+  /* The accent as a foreground: the wordmark's "for", the danger action, a warning
+     note. Identical to --accent in light, where the brick already clears AA on paper. */
+  --accent-text: #a03123;
+  --ok: #2f7d4f;
+  --amber: #f4b942;
+  --on-amber: #16130e;
 
-  --radius: 14px;
-  --radius-sm: 9px;
-  --shadow: 0 1px 2px rgb(25 23 19 / 0.04), 0 4px 16px -8px rgb(25 23 19 / 0.12);
-
-  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: 'Archivo', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Arial, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/*
+ * Dark mode is not in the supplied design, which is light only. Rather than invent a
+ * second visual language, this is the same one with the paper turned down: identical
+ * structure, identical accent role, the brick lifted just enough to keep 6:1 against
+ * its own text. A service people check at night on a phone in a dark room needs it.
+ */
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #14130f;
-    --raised: #1d1b16;
-    --sunk: #262319;
-    --ink: #f4f1ea;
-    --ink-soft: #a8a298;
-    /* 5.0:1 on the dark --paper, for the same reason. */
-    --ink-faint: #8a8378;
-    --line: #302c24;
-    --line-strong: #3e3930;
+    --paper: #14120d;
+    --panel: #1c1913;
+    --field: #100e0a;
+    --ink: #f3efe7;
+    --muted: #a49d90;
+    --faint: #928b7e;
+    --rule: #343027;
+    --rule-strong: #f3efe7;
 
-    --accent: #e8836b;
-    --accent-ink: #1a1006;
-    --accent-wash: #2a1c17;
+    --accent: #c1442f;
+    --on-accent: #fbf7f0;
+    /* Lifted: #c1442f reads at 3.45:1 on the dark panel, and this colour carries real
+       text. Using it as the block background too would cost the text sitting on it. */
+    --accent-text: #d35c49;
     --ok: #7cc79b;
-    --ok-wash: #17241c;
-    --warn: #d9ad63;
-    --warn-wash: #241d10;
-
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+    --amber: #f4b942;
+    --on-amber: #16130e;
   }
 }
 
@@ -76,16 +110,19 @@ body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
-  font: 16px/1.6 var(--sans);
+  font: 400 16px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Every interactive element gets the same visible focus ring, including when the page
-   is driven from a keyboard on a desktop with a mouse attached. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+}
+
+/* The accent block is the one place the focus ring would disappear into its own
+   background, so it gets the paper colour instead. */
+.hero :focus-visible {
+  outline-color: var(--on-accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -95,410 +132,471 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
   }
-}
-
-/* ----------------------------------------------------------------- structure */
-
-.shell {
-  max-width: 56rem;
-  margin: 0 auto;
-  /* env(safe-area-inset-*) keeps the content clear of a notch and of the home
-     indicator when this is opened from a phone's home screen. */
-  padding: 1.5rem max(1rem, env(safe-area-inset-left)) 4rem
-    max(1rem, env(safe-area-inset-right));
-}
-
-@media (min-width: 40rem) {
-  .shell {
-    padding-top: 2.5rem;
-    padding-left: 2rem;
-    padding-right: 2rem;
-  }
-}
-
-.masthead {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 2rem;
-}
-
-.masthead a.wordmark {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  color: inherit;
-  text-decoration: none;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.masthead svg {
-  display: block;
-  color: var(--accent);
-}
-
-.masthead .spacer {
-  flex: 1;
-}
-
-h1 {
-  font-size: clamp(1.75rem, 1.3rem + 2vw, 2.6rem);
-  line-height: 1.12;
-  letter-spacing: -0.025em;
-  margin: 0 0 0.6rem;
-  text-wrap: balance;
-}
-
-h2 {
-  font-size: 1.05rem;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  margin: 0 0 0.3rem;
-}
-
-h3 {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--ink-faint);
-  margin: 0 0 0.75rem;
-  font-weight: 600;
-}
-
-p {
-  margin: 0 0 0.75rem;
-}
-
-.lede {
-  color: var(--ink-soft);
-  font-size: clamp(1rem, 0.95rem + 0.4vw, 1.15rem);
-  margin: 0 0 2rem;
-  max-width: 38rem;
-  text-wrap: pretty;
-}
-
-.sub {
-  color: var(--ink-soft);
-  font-size: 0.92rem;
-  margin: 0 0 0.75rem;
 }
 
 a {
-  color: var(--accent);
-  text-underline-offset: 0.15em;
+  color: var(--ink);
+  text-underline-offset: 0.18em;
 }
 
-code {
-  font: 0.88em/1.4 var(--mono);
-  background: var(--sunk);
-  padding: 0.12em 0.38em;
-  border-radius: 4px;
+a:hover {
+  color: var(--accent-text);
 }
 
 [hidden] {
   display: none !important;
 }
 
-.card {
-  background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 1.15rem 1.15rem;
+/* ------------------------------------------------------------------ structure */
+
+.shell {
+  max-width: 780px;
+  margin: 0 auto;
+  /* env(safe-area-inset-*) keeps the content clear of a notch and of the home
+     indicator when this is opened from a phone's home screen. */
+  padding: 24px max(18px, env(safe-area-inset-left)) 56px max(18px, env(safe-area-inset-right));
 }
 
-@media (min-width: 40rem) {
-  .card {
-    padding: 1.35rem 1.5rem;
+@media (min-width: 46rem) {
+  .shell {
+    padding: 56px 32px 72px;
   }
 }
 
-.stack > * + * {
-  margin-top: 0.85rem;
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 22px;
 }
 
-/* -------------------------------------------------------------------- steps */
-
-.step {
-  display: grid;
-  grid-template-columns: 1.85rem 1fr;
-  gap: 0.5rem 0.9rem;
-  align-items: start;
+@media (min-width: 46rem) {
+  .masthead {
+    margin-bottom: 28px;
+  }
 }
 
-.step .num {
-  grid-row: 1 / span 2;
-  width: 1.85rem;
-  height: 1.85rem;
+.wordmark {
+  display: inline-block;
+  font: 500 13px/1 var(--mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-decoration: none;
+  /* A 13px line is a 13px target. The padding is the hit area, not the look. */
+  padding: 9px 0;
+  margin: -9px 0;
+}
+
+.wordmark em {
+  font-style: normal;
+  color: var(--accent-text);
+}
+
+.whoami {
+  font: 400 12px/1.4 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  text-align: right;
+}
+
+/* On a narrow screen this and the wordmark both wrap into ragged two-line blocks, and
+   it is the less useful of the two — every connected account is named a screen below. */
+@media (max-width: 30rem) {
+  .whoami {
+    display: none;
+  }
+}
+
+/* ----------------------------------------------------------------------- hero */
+
+.hero {
+  background: var(--accent);
+  color: var(--on-accent);
+  padding: 32px 24px 28px;
+}
+
+@media (min-width: 34rem) {
+  .hero {
+    padding: 48px 40px 42px;
+  }
+}
+
+@media (min-width: 46rem) {
+  .hero {
+    padding: 64px 64px 56px;
+  }
+}
+
+.hero h1 {
+  font: 800 clamp(34px, 8.5vw, 56px) / 1.02 var(--sans);
+  letter-spacing: -0.03em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.hero .pitch {
+  font: 400 clamp(15px, 3.4vw, 17px) / 1.55 var(--sans);
+  margin: 20px 0 0;
+  max-width: 32rem;
+  opacity: 0.92;
+  text-wrap: pretty;
+}
+
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 12px/1.35 var(--mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.eyebrow .dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: var(--sunk);
-  border: 1px solid var(--line-strong);
+  background: currentColor;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+}
+
+.hero .track {
+  font: 800 clamp(28px, 7.5vw, 48px) / 1.05 var(--sans);
+  letter-spacing: -0.03em;
+  margin: 18px 0 0;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.hero .by {
+  font: 400 clamp(15px, 3.6vw, 20px) / 1.4 var(--sans);
+  margin: 8px 0 0;
+  opacity: 0.9;
+  overflow-wrap: anywhere;
+}
+
+.hero .elsewhere {
+  font: 400 12px/1.8 var(--mono);
+  letter-spacing: 0.06em;
+  margin: 22px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--on-accent) 30%, transparent);
+  opacity: 0.85;
+  text-transform: uppercase;
+}
+
+.hero .quiet-title {
+  font: 800 clamp(26px, 6.5vw, 44px) / 1.05 var(--sans);
+  letter-spacing: -0.03em;
+  margin: 16px 0 0;
+  text-wrap: balance;
+}
+
+.hero .quiet-note {
+  font: 400 clamp(14px, 3.2vw, 16px) / 1.5 var(--sans);
+  margin: 12px 0 0;
+  opacity: 0.88;
+}
+
+/* ---------------------------------------------------------------------- stats */
+
+.stats {
   display: grid;
-  place-items: center;
-  font-size: 0.82rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-soft);
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 0;
 }
 
-.step[data-done='true'] .num {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: var(--raised);
+@media (min-width: 46rem) {
+  .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 20px;
+  }
 }
 
-.step[data-done='true'] .num::after {
-  content: '✓';
-  font-size: 0.95rem;
-  line-height: 1;
-}
-
-.step[data-done='true'] .num span {
-  display: none;
-}
-
-.step .body {
+.stats div {
+  border: 2px solid var(--rule);
+  background: var(--panel);
+  padding: 14px 16px;
   min-width: 0;
 }
 
-/* ------------------------------------------------------------------ controls */
+.stats dt {
+  font: 400 11px/1.4 var(--mono);
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+
+.stats dd {
+  margin: 2px 0 0;
+  font: 700 clamp(19px, 5vw, 24px) / 1.2 var(--sans);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------- sections */
+
+.rows {
+  display: grid;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+@media (min-width: 46rem) {
+  .rows {
+    gap: 14px;
+    margin-top: 44px;
+  }
+}
+
+h2.section {
+  font: 500 12px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 30px 0 -2px;
+}
+
+/* A connection or a setting. One flat bordered band; the label leads, the explanation
+   follows, the control sits at the end. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  border: 2px solid var(--rule);
+  background: var(--panel);
+  padding: 16px 18px;
+}
+
+@media (min-width: 46rem) {
+  .row {
+    flex-wrap: nowrap;
+    padding: 18px 22px;
+  }
+}
+
+/* The one action the page is really asking for. */
+.row.primary {
+  border-color: var(--rule-strong);
+}
+
+.row .name {
+  font: 800 15px/1.25 var(--sans);
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+@media (min-width: 46rem) {
+  .row .name {
+    flex: 1 1 auto;
+  }
+}
+
+.row.fixed .name {
+  flex: none;
+}
+
+/* Four things on one band is one too many, even at full width: label, explanation,
+   field and button leave the field about nine characters wide. So this row alone keeps
+   wrapping, and the explanation drops to a line of its own underneath. */
+@media (min-width: 46rem) {
+  .row.fixed {
+    flex-wrap: wrap;
+  }
+
+  .row.fixed .why {
+    flex: 1 1 100%;
+    order: 3;
+    margin: 0;
+  }
+
+  .row.fixed input[type='text'] {
+    flex: 1 1 18rem;
+  }
+}
+
+.row .why {
+  font: 400 12px/1.45 var(--sans);
+  color: var(--muted);
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+@media (min-width: 46rem) {
+  .row .why {
+    flex: 0 1 17rem;
+  }
+}
+
+.row .state {
+  font: 500 13px/1.4 var(--mono);
+  color: var(--ok);
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 46rem) {
+  .row .state {
+    flex: 0 1 auto;
+    text-align: right;
+  }
+}
+
+.row .state.needs {
+  color: var(--accent-text);
+}
+
+/* -------------------------------------------------------------------- controls */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
-  /* 44px tall: the smallest target that is reliably hittable with a thumb. */
+  /* 44px: the smallest target that is reliably hittable with a thumb. */
   min-height: 44px;
-  padding: 0.55rem 1.05rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-ink);
-  font: inherit;
-  font-size: 0.94rem;
-  font-weight: 500;
-  text-decoration: none;
+  padding: 11px 20px;
+  font: 700 13px/1 var(--sans);
+  background: transparent;
+  color: var(--ink);
+  border: 2px solid var(--rule-strong);
+  border-radius: 0;
   cursor: pointer;
-  transition: filter 0.15s, background 0.15s, border-color 0.15s;
+  text-decoration: none;
+  flex: 1 1 100%;
+}
+
+@media (min-width: 46rem) {
+  .btn {
+    flex: none;
+  }
+}
+
+.btn.solid {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
 }
 
 .btn:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: default;
 }
 
-.btn.secondary {
-  background: var(--raised);
-  color: var(--ink);
-  border-color: var(--line-strong);
-}
-
-.btn.secondary:hover:not(:disabled) {
-  background: var(--sunk);
-  filter: none;
-}
-
-.btn.danger {
-  background: transparent;
-  color: var(--accent);
-  border-color: var(--line-strong);
-}
-
-.btn.danger:hover:not(:disabled) {
-  background: var(--accent-wash);
-  border-color: var(--accent);
-  filter: none;
-}
-
-.btn.small {
-  min-height: 38px;
-  padding: 0.35rem 0.8rem;
-  font-size: 0.88rem;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-}
-
-/* On a narrow screen a row of buttons that wraps into ragged fragments is worse than
-   a stack of full-width ones. */
-@media (max-width: 26rem) {
-  .actions .btn {
-    flex: 1 1 100%;
-  }
-}
-
-input[type='text'],
-input[type='password'] {
-  width: 100%;
+input[type='text'] {
+  flex: 1 1 100%;
+  min-width: 0;
   min-height: 44px;
-  padding: 0.55rem 0.7rem;
-  font: inherit;
+  padding: 11px 12px;
   /* 16px exactly: anything smaller makes iOS Safari zoom the page on focus. */
-  font-size: 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
+  font: 400 16px/1.2 var(--mono);
+  border: 2px solid var(--rule-strong);
+  border-radius: 0;
+  background: var(--field);
   color: var(--ink);
-  margin-bottom: 0.6rem;
+}
+
+@media (min-width: 46rem) {
+  input[type='text'] {
+    flex: 1 1 12rem;
+    font-size: 13px;
+  }
 }
 
 input::placeholder {
-  color: var(--ink-faint);
+  color: var(--faint);
+  opacity: 1;
 }
 
-/* --------------------------------------------------------------- now playing */
-
-.now {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.now:last-child {
-  border-bottom: 0;
-}
-
-.now .room {
-  flex: none;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink-faint);
-  min-width: 5.5rem;
-}
-
-.now .title {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.now .title .artist {
-  color: var(--ink-soft);
-}
-
-@media (max-width: 30rem) {
-  .now {
-    display: block;
-  }
-  .now .room {
-    display: block;
-    margin-bottom: 0.15rem;
-  }
-}
-
-/* -------------------------------------------------------------------- health */
-
-.health {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.4rem 1rem;
-  margin: 0;
-  font-size: 0.9rem;
-}
-
-@media (min-width: 34rem) {
-  .health {
-    grid-template-columns: repeat(2, 1fr auto);
-    column-gap: 1.5rem;
-  }
-}
-
-.health dt {
-  color: var(--ink-soft);
-}
-
-.health dd {
-  margin: 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ------------------------------------------------------------------- toggles */
+/* ------------------------------------------------------------------- settings */
 
 .toggle {
   display: flex;
   align-items: flex-start;
-  gap: 0.85rem;
-  padding: 0.7rem 0;
-  border-bottom: 1px solid var(--line);
+  gap: 14px;
+  border: 2px solid var(--rule);
+  background: var(--panel);
+  padding: 16px 18px;
   cursor: pointer;
-}
-
-.toggle:last-of-type {
-  border-bottom: 0;
-  padding-bottom: 0;
 }
 
 .toggle input {
   flex: none;
-  width: 1.2rem;
-  height: 1.2rem;
-  margin: 0.22rem 0 0;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
   accent-color: var(--accent);
   cursor: pointer;
 }
 
-.toggle .label {
-  min-width: 0;
-}
-
-.toggle .label strong {
+.toggle .name {
+  font: 800 15px/1.25 var(--sans);
   display: block;
-  font-weight: 500;
 }
 
-.toggle .label span {
+.toggle .why {
+  font: 400 13px/1.5 var(--sans);
+  color: var(--muted);
   display: block;
-  color: var(--ink-soft);
-  font-size: 0.88rem;
-  line-height: 1.45;
+  margin-top: 4px;
 }
 
-/* ------------------------------------------------------------------ messages */
+/* ------------------------------------------------------------------- messages */
 
 .banner {
-  display: flex;
-  gap: 0.6rem;
-  border: 1px solid var(--line-strong);
-  border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  padding: 0.7rem 0.9rem;
-  margin-bottom: 1.25rem;
-  font-size: 0.92rem;
-  background: var(--raised);
+  font: 500 14px/1.5 var(--sans);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  background: var(--amber);
+  color: var(--on-amber);
+}
+
+.banner a,
+.banner button.link {
+  color: inherit;
+  font-weight: 700;
 }
 
 .banner.err {
-  border-left-color: var(--accent);
-  background: var(--accent-wash);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .banner.ok {
-  border-left-color: var(--ok);
-  background: var(--ok-wash);
-}
-
-.banner.warn {
-  border-left-color: var(--warn);
-  background: var(--warn-wash);
+  background: var(--ok);
+  color: #f6fbf7;
 }
 
 .note {
-  font-size: 0.9rem;
-  margin: 0.35rem 0 0;
+  font: 400 13px/1.5 var(--sans);
+  color: var(--muted);
+  margin: 8px 0 0;
+  flex: 1 1 100%;
 }
 
 .note.ok {
@@ -506,63 +604,173 @@ input::placeholder {
 }
 
 .note.warn {
-  color: var(--warn);
+  color: var(--accent-text);
+  font-weight: 500;
 }
 
 pre.output {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 0.78rem/1.5 var(--mono);
-  background: var(--sunk);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 0.7rem 0.8rem;
-  margin: 0.75rem 0 0;
+  font: 400 12px/1.55 var(--mono);
+  background: var(--panel);
+  border: 2px solid var(--rule);
+  padding: 12px 14px;
+  margin: 12px 0 0;
   max-height: 18rem;
   overflow: auto;
 }
 
-/* -------------------------------------------------------------------- prose */
-
-.prose {
-  max-width: 40rem;
-}
-
-.prose h2 {
-  margin-top: 2rem;
-  font-size: 1.15rem;
-}
-
-.prose ul {
-  padding-left: 1.15rem;
-  margin: 0 0 0.75rem;
-}
-
-.prose li {
-  margin-bottom: 0.4rem;
-}
-
-/* ------------------------------------------------------------------- footer */
+/* --------------------------------------------------------------------- footer */
 
 footer {
-  margin-top: 3rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--line);
-  color: var(--ink-faint);
-  font-size: 0.85rem;
+  margin-top: 40px;
+  border-top: 2px solid var(--rule-strong);
+  padding-top: 18px;
+  font: 400 13px/1.6 var(--sans);
+  color: var(--muted);
+}
+
+@media (min-width: 46rem) {
+  footer {
+    margin-top: 52px;
+  }
 }
 
 footer p {
-  max-width: 42rem;
+  margin: 0 0 12px;
 }
 
-footer a {
-  color: var(--ink-soft);
+footer strong {
+  color: var(--ink);
+}
+
+footer .fine {
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+footer details {
+  margin: 14px 0;
+}
+
+footer summary {
+  font: 500 12px/1.4 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+  cursor: pointer;
+  /* A 12px summary is a small target; the padding brings the hit area up without
+     changing how the line looks. */
+  padding: 15px 0;
+}
+
+footer .account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 4px;
+}
+
+/* Buttons that read as links, because these are the three things nobody should press
+   by accident while reaching for something else. */
+.linkbtn {
+  font: 500 12px/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: none;
+  border: 0;
+  padding: 14px 0;
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+.linkbtn:hover:not(:disabled) {
+  color: var(--accent-text);
+}
+
+.linkbtn.danger {
+  color: var(--accent-text);
+}
+
+.linkbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 footer nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem 1rem;
-  margin-top: 1rem;
+  gap: 8px 22px;
+  margin-top: 14px;
+  font: 500 12px/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+footer nav a {
+  display: inline-block;
+  padding: 14px 0;
+}
+
+/* Available to a screen reader, absent from the layout. Used for the labels on
+   controls whose visible name is carried by an adjacent element. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------------- prose */
+
+.prose {
+  max-width: 38rem;
+}
+
+.prose h1 {
+  font: 800 clamp(30px, 7vw, 44px) / 1.05 var(--sans);
+  letter-spacing: -0.03em;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+
+.prose .lede {
+  font: 400 clamp(15px, 3.4vw, 17px) / 1.55 var(--sans);
+  color: var(--muted);
+  margin: 0 0 8px;
+  text-wrap: pretty;
+}
+
+.prose h2 {
+  font: 700 18px/1.3 var(--sans);
+  letter-spacing: -0.01em;
+  margin: 32px 0 10px;
+}
+
+.prose p {
+  margin: 0 0 12px;
+}
+
+.prose ul {
+  padding-left: 1.1rem;
+  margin: 0 0 12px;
+}
+
+.prose li {
+  margin-bottom: 8px;
+}
+
+.prose code {
+  font: 400 0.9em/1.4 var(--mono);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.35em;
 }

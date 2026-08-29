@@ -6,174 +6,184 @@
     <title>Scrobbler for Sonos</title>
     <meta
       name="description"
-      content="Scrobble everything your Sonos speakers play to Last.fm and ListenBrainz. Nothing to install, nothing to keep running at home."
+      content="Every play, every speaker, straight to your Last.fm and ListenBrainz. Nothing to install, nothing running at home, no history kept here."
     />
-    <meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#14130f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#14120d" media="(prefers-color-scheme: dark)" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Scrobbler for Sonos" />
     <meta
       property="og:description"
-      content="Scrobble everything your Sonos speakers play to Last.fm and ListenBrainz. Nothing to install, nothing to keep running at home."
+      content="Every play, every speaker, straight to your Last.fm and ListenBrainz. Nothing to install, nothing running at home."
     />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <link rel="manifest" href="/site.webmanifest" />
+    <!-- The two faces above the fold. Preloaded so the headline does not land in a
+         fallback and then reflow into Archivo a moment later. -->
+    <link
+      rel="preload"
+      href="/fonts/Archivo-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/IBMPlexMono-500.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <main class="shell">
       <header class="masthead">
-        <a class="wordmark" href="/">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="2" width="18" height="20" rx="4" stroke="currentColor" stroke-width="1.7" />
-            <circle cx="12" cy="14.5" r="4" stroke="currentColor" stroke-width="1.7" />
-            <circle cx="12" cy="6.5" r="1.4" fill="currentColor" />
-          </svg>
-          Scrobbler for Sonos
-        </a>
-        <span class="spacer"></span>
+        <a class="wordmark" href="/">Scrobbler <em>for</em> Sonos</a>
+        <span class="whoami" id="whoami" hidden></span>
       </header>
 
-      <h1>Scrobble what your Sonos plays</h1>
-      <p class="lede">
-        Link your accounts once and everything your speakers play reaches Last.fm and
-        ListenBrainz — including music you start from a phone, a speaker button, an alarm or a
-        voice assistant. Nothing to install and nothing to keep running at home.
-      </p>
-
       <div id="banner" class="banner" role="status" hidden></div>
+      <div id="sub-warning" class="banner" role="status" hidden></div>
 
-      <section id="steps" class="stack" aria-label="Connect your accounts">
-        <div class="card step" id="step-sonos">
-          <div class="num"><span>1</span></div>
-          <div class="body">
-            <h2>Connect Sonos</h2>
-            <p class="sub">
-              We ask for playback access because it is the only permission Sonos offers. This
-              service only ever reads what is playing — it never controls your speakers.
-            </p>
-            <a class="btn" href="/auth/sonos/start">Connect Sonos</a>
-            <p class="note ok" hidden></p>
-          </div>
-        </div>
-
-        <div class="card step" id="step-lastfm">
-          <div class="num"><span>2</span></div>
-          <div class="body">
-            <h2>Connect Last.fm</h2>
-            <p class="sub">Optional if you only use ListenBrainz.</p>
-            <a class="btn secondary" href="/auth/lastfm/start">Connect Last.fm</a>
-            <p class="note ok" hidden></p>
-          </div>
-        </div>
-
-        <div class="card step" id="step-listenbrainz">
-          <div class="num"><span>3</span></div>
-          <div class="body">
-            <h2>Connect ListenBrainz</h2>
-            <p class="sub">
-              ListenBrainz has no sign-in button for this. Copy your token from
-              <a href="https://listenbrainz.org/settings/" target="_blank" rel="noopener noreferrer"
-                >listenbrainz.org/settings</a
-              >
-              and paste it here.
-            </p>
-            <form method="POST" action="/auth/listenbrainz">
-              <label class="sub" for="lb-token">ListenBrainz user token</label>
-              <input
-                type="text"
-                id="lb-token"
-                name="token"
-                autocomplete="off"
-                autocapitalize="none"
-                autocorrect="off"
-                spellcheck="false"
-                placeholder="Paste your token"
-              />
-              <button class="btn secondary" type="submit">Save token</button>
-            </form>
-            <p class="note ok" hidden></p>
-          </div>
-        </div>
-      </section>
-
-      <section id="status" class="stack" style="margin-top: 1.75rem" hidden>
-        <div id="sub-warning" class="banner warn" role="status" hidden></div>
-
-        <div class="card">
-          <h3>Right now</h3>
-          <div id="nowplaying" aria-live="polite"><p class="sub">Nothing playing.</p></div>
-          <p class="sub" id="rooms" style="margin-top: 0.75rem; margin-bottom: 0"></p>
-        </div>
-
-        <div class="card">
-          <h3>Pipeline</h3>
-          <dl class="health" id="health"></dl>
-        </div>
-
-        <div class="card">
-          <h3>What gets scrobbled</h3>
-          <label class="toggle">
-            <input type="checkbox" id="set-radio" />
-            <span class="label">
-              <strong>Radio and streams</strong>
-              <span
-                >Stations report no track length, so a title has to play for four minutes
-                straight before it counts. Turn this off if station idents and adverts are
-                reaching your history.</span
-              >
-            </span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="set-handoff" />
-            <span class="label">
-              <strong>Music cast from an app</strong>
-              <span
-                >AirPlay, Spotify Connect and similar hand playback to the speaker. Their own
-                apps usually scrobble these already, so leaving this off avoids duplicates.</span
-              >
-            </span>
-          </label>
-          <p class="note" id="settings-note" hidden></p>
-        </div>
-
-        <div class="card">
-          <h3>Your account</h3>
-          <p class="sub">
-            A rescan re-discovers your rooms and re-subscribes them. It is the fix for a new
-            speaker that is not scrobbling.
+      <section class="hero">
+        <div id="hero-pitch">
+          <h1>Every play.<br />Every speaker.<br />Your Last.fm.</h1>
+          <p class="pitch">
+            Alarms, voice assistants, the button on the speaker — if your Sonos plays it, it
+            scrobbles. Nothing to install, nothing running at home, no history kept here.
           </p>
-          <div class="actions">
-            <button class="btn secondary" id="rescan" type="button">Rescan rooms</button>
-            <button class="btn secondary" id="signout" type="button">Sign out</button>
-            <button class="btn danger" id="delete" type="button">Delete everything</button>
-          </div>
-          <pre id="rescan-out" class="output" hidden></pre>
+        </div>
+
+        <div id="hero-playing" hidden aria-live="polite">
+          <p class="eyebrow"><span class="dot"></span><span id="np-room"></span></p>
+          <p class="track" id="np-track"></p>
+          <p class="by" id="np-by"></p>
+          <p class="elsewhere" id="np-elsewhere" hidden></p>
+        </div>
+
+        <div id="hero-quiet" hidden aria-live="polite">
+          <p class="eyebrow">All quiet</p>
+          <p class="quiet-title">Nothing playing right now.</p>
+          <p class="quiet-note" id="quiet-note">
+            Play something on any speaker and it will appear here.
+          </p>
         </div>
       </section>
+
+      <dl class="stats" id="stats" hidden>
+        <div><dt>Rooms</dt><dd id="stat-rooms">—</dd></div>
+        <div><dt>Subscriptions</dt><dd id="stat-subs">—</dd></div>
+        <div><dt>Last event</dt><dd id="stat-event">—</dd></div>
+        <div><dt>Last scrobble</dt><dd id="stat-scrobble">—</dd></div>
+      </dl>
+
+      <div class="rows">
+        <div class="row primary" id="step-sonos">
+          <span class="name" data-connected="Sonos">Connect Sonos</span>
+          <span class="why">Reads what's playing. Never controls your speakers.</span>
+          <a class="btn solid" href="/auth/sonos/start">Connect →</a>
+          <span class="state" hidden></span>
+        </div>
+
+        <div class="row" id="step-lastfm">
+          <span class="name" data-connected="Last.fm">Connect Last.fm</span>
+          <span class="why">Optional if you only use ListenBrainz.</span>
+          <a class="btn" href="/auth/lastfm/start">Connect</a>
+          <span class="state" hidden></span>
+        </div>
+
+        <form class="row fixed" id="step-listenbrainz" method="POST" action="/auth/listenbrainz">
+          <span class="name">ListenBrainz</span>
+          <span class="why"
+            >No sign-in button for this one. Copy your token from
+            <a href="https://listenbrainz.org/settings/" target="_blank" rel="noopener noreferrer"
+              >listenbrainz.org/settings</a
+            >.</span
+          >
+          <label class="visually-hidden" for="lb-token">ListenBrainz user token</label>
+          <input
+            type="text"
+            id="lb-token"
+            name="token"
+            autocomplete="off"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="Paste your token"
+          />
+          <button class="btn" type="submit">Save</button>
+          <span class="state" hidden></span>
+        </form>
+      </div>
+
+      <h2 class="section" id="settings-heading" hidden>What gets scrobbled</h2>
+      <div class="rows" id="settings" hidden>
+        <label class="toggle">
+          <input type="checkbox" id="set-radio" />
+          <span>
+            <span class="name">Radio and streams</span>
+            <span class="why"
+              >Stations report no track length, so a title has to play for four minutes
+              straight before it counts. Turn this off if station idents and adverts are
+              reaching your history.</span
+            >
+          </span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="set-handoff" />
+          <span>
+            <span class="name">Music cast from an app</span>
+            <span class="why"
+              >AirPlay, Spotify Connect and similar hand playback to the speaker. Their own
+              apps usually scrobble these already, so leaving this off avoids duplicates.</span
+            >
+          </span>
+        </label>
+        <p class="note" id="settings-note" role="status" hidden></p>
+      </div>
 
       <footer>
         <p>
-          <strong>We do not keep your listening history.</strong> A track is held only while it is
-          playing and until the services accept it, then discarded. Your history lives in your own
-          Last.fm and ListenBrainz accounts, which is where you can read it back.
+          <strong>We keep no listening history.</strong> A track exists here only while it plays,
+          then it's yours on Last.fm and ListenBrainz — read it back there.
         </p>
-        <p>
-          Not affiliated with, endorsed by, or sponsored by Sonos, Last.fm or MetaBrainz. Sonos is a
-          trademark of Sonos, Inc.
+
+        <details id="account" hidden>
+          <summary>Account</summary>
+          <div class="account-actions">
+            <button class="linkbtn" id="rescan" type="button">Rescan rooms</button>
+            <button class="linkbtn" id="signout" type="button">Sign out</button>
+            <button class="linkbtn danger" id="delete" type="button">Delete everything</button>
+          </div>
+          <p class="note">
+            A rescan re-discovers your rooms and re-subscribes them. It is the fix for a new
+            speaker that is not scrobbling.
+          </p>
+          <pre id="rescan-out" class="output" hidden></pre>
+        </details>
+
+        <p class="fine">
+          Not affiliated with, endorsed by, or sponsored by Sonos, Last.fm or MetaBrainz. Sonos is
+          a trademark of Sonos, Inc.
         </p>
+
         <nav>
           <a href="/privacy">Privacy</a>
           <a href="/terms">Terms</a>
-          <a href="https://github.com/suvir0/sonos-scrobbler" rel="noopener noreferrer">Source</a>
+          <a href="https://github.com/Suvir0/sonos-scrobbler" rel="noopener noreferrer">Source</a>
         </nav>
       </footer>
     </main>
 
     <script type="module">
+      const $ = (id) => document.getElementById(id);
+
+      /* ------------------------------------------------------------ arrival banner */
+
       const params = new URLSearchParams(location.search);
-      const banner = document.getElementById('banner');
+      const banner = $('banner');
 
       const MESSAGES = {
         sonos_denied: ['err', 'Sonos sign-in was cancelled.'],
@@ -197,16 +207,7 @@
       }
       if (error || linked) history.replaceState(null, '', location.pathname);
 
-      function markDone(id, text) {
-        const step = document.getElementById(id);
-        step.dataset.done = 'true';
-        const note = step.querySelector('.note');
-        note.className = 'note ok';
-        note.textContent = text;
-        note.hidden = false;
-        const action = step.querySelector('a.btn, form');
-        if (action) action.hidden = true;
-      }
+      /* ------------------------------------------------------------------ helpers */
 
       const ago = (at) => {
         if (!at) return 'never';
@@ -217,14 +218,39 @@
         return `${Math.round(seconds / 86400)} days ago`;
       };
 
-      /* --------------------------------------------------------------- settings */
+      function connected(id, text) {
+        const row = $(id);
+        // "Connect Sonos" is a request; once it is connected the row is a statement, so
+        // the verb goes with the button that has just disappeared.
+        const name = row.querySelector('.name');
+        if (name.dataset.connected) name.textContent = name.dataset.connected;
+        const state = row.querySelector('.state');
+        state.className = 'state';
+        state.textContent = `✓ ${text}`;
+        state.hidden = false;
+        // The explanation and the button have both done their job once the account is
+        // linked; what is left is the row saying so.
+        for (const gone of row.querySelectorAll('.why, .btn, input')) gone.hidden = true;
+        row.classList.remove('primary');
+      }
 
-      // Read once on load rather than on every poll: nothing else changes these, and
-      // re-reading them every fifteen seconds would fight a checkbox mid-click.
-      const radioBox = document.getElementById('set-radio');
-      const handoffBox = document.getElementById('set-handoff');
-      const settingsNote = document.getElementById('settings-note');
+      function needsAttention(id, text) {
+        const row = $(id);
+        const state = row.querySelector('.state');
+        state.className = 'state needs';
+        state.textContent = text;
+        state.hidden = false;
+      }
 
+      /* ----------------------------------------------------------------- settings */
+
+      const radioBox = $('set-radio');
+      const handoffBox = $('set-handoff');
+      const settingsNote = $('settings-note');
+
+      // Read once when the session is first seen, not on every poll: nothing else
+      // changes these, and re-reading every fifteen seconds would fight a checkbox
+      // mid-click.
       async function loadSettings() {
         const response = await fetch('/api/settings');
         if (!response.ok) return;
@@ -250,8 +276,8 @@
           settingsNote.className = 'note ok';
           settingsNote.textContent = 'Saved. Takes effect on the next track.';
         } catch {
-          // Put the checkbox back: a toggle that stays flipped after a failed save is
-          // a lie about what the service will do.
+          // Put the checkbox back: a toggle that stays flipped after a failed save is a
+          // lie about what the service will do.
           box.checked = !box.checked;
           settingsNote.className = 'note warn';
           settingsNote.textContent = 'Could not save that. Please try again.';
@@ -261,7 +287,43 @@
       radioBox.addEventListener('change', saveSettings);
       handoffBox.addEventListener('change', saveSettings);
 
-      /* ----------------------------------------------------------------- status */
+      /* -------------------------------------------------------------------- hero */
+
+      function renderHero(data) {
+        const playing = data.nowPlaying ?? [];
+        const rooms = data.rooms ?? [];
+
+        $('hero-pitch').hidden = true;
+        $('hero-playing').hidden = playing.length === 0;
+        $('hero-quiet').hidden = playing.length > 0;
+
+        if (playing.length) {
+          const [first, ...rest] = playing;
+          $('np-room').textContent = `Now playing · ${first.room}`;
+          $('np-track').textContent = first.track;
+          // Artist and album on one line, as the design has it; the album is dropped
+          // rather than shown as a dangling dash when the source did not report one.
+          $('np-by').textContent = first.album
+            ? `${first.artist} — ${first.album}`
+            : first.artist;
+
+          // Every other room the service is watching, on one mono line: what else is
+          // going, and what is silent.
+          const busy = new Set(playing.map((item) => item.room));
+          const others = [
+            ...rest.map((item) => `${item.room} · ${item.track}`),
+            ...rooms.filter((room) => !busy.has(room)).map((room) => `${room} · quiet`)
+          ];
+          $('np-elsewhere').textContent = others.join(' ');
+          $('np-elsewhere').hidden = others.length === 0;
+        } else {
+          $('quiet-note').textContent = rooms.length
+            ? `Play something on any speaker and it will appear here. Last scrobble ${ago(data.lastScrobbleAt)}.`
+            : 'No rooms are being watched yet. Press Rescan rooms below.';
+        }
+      }
+
+      /* ------------------------------------------------------------------ status */
 
       let signedIn = false;
 
@@ -282,115 +344,85 @@
         }
 
         // A revoked grant beats every other state on this page: nothing works without
-        // it, and until it is reconnected the rest of the status is describing a
-        // pipeline that cannot receive anything.
+        // it, and until it is reconnected the rest of the status describes a pipeline
+        // that cannot receive anything.
         if (data.sonos?.needsReauth) {
-          const step = document.getElementById('step-sonos');
-          delete step.dataset.done;
-          const note = step.querySelector('.note');
-          note.className = 'note warn';
-          note.textContent = 'Sonos has revoked this connection. Reconnect to start scrobbling again.';
-          note.hidden = false;
-          const action = step.querySelector('a.btn');
+          needsAttention('step-sonos', 'Sonos revoked this connection — reconnect');
+          const action = $('step-sonos').querySelector('.btn');
           if (action) action.hidden = false;
         } else if (data.households?.length) {
-          markDone('step-sonos', `Connected — ${data.rooms.length} room(s).`);
+          const count = data.rooms.length;
+          connected('step-sonos', `Connected — ${count} room${count === 1 ? '' : 's'}`);
         }
+
         for (const target of data.targets ?? []) {
           const id = target.kind === 'lastfm' ? 'step-lastfm' : 'step-listenbrainz';
           if (target.needsReauth) {
-            const step = document.getElementById(id);
-            const note = step.querySelector('.note');
-            note.className = 'note warn';
-            note.textContent = 'Reconnect needed — the service rejected our credentials.';
-            note.hidden = false;
+            needsAttention(id, 'Reconnect needed — credentials rejected');
           } else {
-            markDone(id, `Connected as ${target.username ?? 'you'}.`);
+            connected(id, `Connected as ${target.username ?? 'you'}`);
           }
         }
 
-        document.getElementById('status').hidden = false;
+        const username = (data.targets ?? []).find((target) => target.username)?.username;
+        const whoami = $('whoami');
+        whoami.textContent = username ? `${username} · signed in` : 'Signed in';
+        whoami.hidden = false;
+
+        $('stats').hidden = false;
+        $('settings-heading').hidden = false;
+        $('settings').hidden = false;
+        $('account').hidden = false;
+
+        renderHero(data);
 
         // Two timestamps do most of the diagnostic work: they separate "quiet because
         // nobody is listening" from "quiet because something is broken". Every failure
         // so far looked identical to an idle house without them.
-        const health = document.getElementById('health');
-        health.replaceChildren();
-        for (const [label, value] of [
-          ['Rooms watched', String(data.rooms?.length ?? 0)],
-          ['Subscriptions', String(data.subscriptions?.total ?? 0)],
-          ['Last event from Sonos', ago(data.lastEventAt)],
-          ['Last scrobble', ago(data.lastScrobbleAt)]
-        ]) {
-          const dt = document.createElement('dt');
-          dt.textContent = label;
-          const dd = document.createElement('dd');
-          dd.textContent = value;
-          health.append(dt, dd);
-        }
-
-        // Rooms but no subscriptions means Sonos will never send us a playback event.
-        // Everything else on this page looks healthy in that state, so say it plainly.
-        const warning = document.getElementById('sub-warning');
         const subs = data.subscriptions ?? { total: 0, failing: 0, lastError: null };
+        $('stat-rooms').textContent = String(data.rooms?.length ?? 0);
+        $('stat-subs').textContent = subs.failing
+          ? `${subs.total - subs.failing}/${subs.total}`
+          : String(subs.total);
+        $('stat-event').textContent = ago(data.lastEventAt);
+        $('stat-scrobble').textContent = ago(data.lastScrobbleAt);
+
+        // Rooms but no subscriptions means Sonos will never send a playback event.
+        // Everything else on this page looks healthy in that state, so say it plainly.
+        const warning = $('sub-warning');
+        warning.className = 'banner';
         if (data.rooms?.length && subs.total === 0) {
           warning.hidden = false;
           warning.textContent =
-            'Your rooms were found, but Sonos is not sending us playback events yet, ' +
-            'so nothing will scrobble. Press Rescan rooms below. ' +
+            'Your rooms were found, but Sonos is not sending playback events yet, so ' +
+            'nothing will scrobble. Open Account below and press Rescan rooms. ' +
             (subs.lastError ? `Last error: ${subs.lastError}` : '');
         } else if (subs.failing > 0) {
           warning.hidden = false;
           warning.textContent =
-            `${subs.failing} of ${subs.total} subscriptions are failing to renew. ` +
+            `${subs.failing} of ${subs.total} subscriptions are failing to renew — those ` +
+            'rooms may stop scrobbling. Open Account below and press Rescan rooms. ' +
             (subs.lastError ? `Last error: ${subs.lastError}` : '');
         } else if (subs.total > 0 && data.lastEventAt && Date.now() - data.lastEventAt > 86_400_000) {
           // Subscribed but silent for a day. Sonos drops a subscription whose target
           // player leaves the network, and the failure is otherwise invisible.
           warning.hidden = false;
           warning.textContent =
-            'Sonos has not sent us anything for over a day. If you have played music ' +
-            'since then, press Rescan rooms to re-establish the subscriptions.';
+            'Sonos has not sent anything for over a day. If you have played music since ' +
+            'then, open Account below and press Rescan rooms.';
         } else {
           warning.hidden = true;
         }
-
-        document.getElementById('rooms').textContent = data.rooms?.length
-          ? `Watching: ${data.rooms.join(', ')}`
-          : '';
-
-        const np = document.getElementById('nowplaying');
-        np.replaceChildren();
-        if (data.nowPlaying?.length) {
-          for (const item of data.nowPlaying) {
-            const row = document.createElement('p');
-            row.className = 'now';
-            const room = document.createElement('span');
-            room.className = 'room';
-            room.textContent = item.room;
-            const title = document.createElement('span');
-            title.className = 'title';
-            const artist = document.createElement('span');
-            artist.className = 'artist';
-            artist.textContent = `${item.artist} — `;
-            title.append(artist, document.createTextNode(item.track));
-            row.append(room, title);
-            np.append(row);
-          }
-        } else {
-          const p = document.createElement('p');
-          p.className = 'sub';
-          p.textContent = 'Nothing playing.';
-          np.append(p);
-        }
       }
+
+      /* ----------------------------------------------------------------- actions */
 
       // Re-runs household discovery and re-subscribes every group. The same work the
       // link flow does in the background, but here the result is visible — which is the
       // only way to see why linking silently found nothing.
-      document.getElementById('rescan').addEventListener('click', async (event) => {
+      $('rescan').addEventListener('click', async (event) => {
         const button = event.currentTarget;
-        const out = document.getElementById('rescan-out');
+        const out = $('rescan-out');
         button.disabled = true;
         button.textContent = 'Rescanning…';
         out.hidden = false;
@@ -407,13 +439,18 @@
         refresh().catch(() => undefined);
       });
 
-      document.getElementById('signout').addEventListener('click', async () => {
+      $('signout').addEventListener('click', async () => {
         await fetch('/auth/logout', { method: 'POST' });
         location.href = '/';
       });
 
-      document.getElementById('delete').addEventListener('click', async () => {
-        if (!confirm('Delete your account, unsubscribe from Sonos and erase every credential we hold?')) return;
+      $('delete').addEventListener('click', async () => {
+        if (
+          !confirm(
+            'Delete your account, unsubscribe from Sonos and erase every credential we hold?'
+          )
+        )
+          return;
         await fetch('/api/account', { method: 'DELETE' });
         location.href = '/';
       });

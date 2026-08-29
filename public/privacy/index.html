@@ -5,24 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Privacy · Scrobbler for Sonos</title>
     <meta name="description" content="What Scrobbler for Sonos stores, what it never stores, and how to delete it." />
-    <meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#14130f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#14120d" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/fonts/Archivo-variable.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <main class="shell">
       <header class="masthead">
-        <a class="wordmark" href="/">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="2" width="18" height="20" rx="4" stroke="currentColor" stroke-width="1.7" />
-            <circle cx="12" cy="14.5" r="4" stroke="currentColor" stroke-width="1.7" />
-            <circle cx="12" cy="6.5" r="1.4" fill="currentColor" />
-          </svg>
-          Scrobbler for Sonos
-        </a>
+        <a class="wordmark" href="/">Scrobbler <em>for</em> Sonos</a>
       </header>
       <article class="prose">
+
         <h1>Privacy</h1>
         <p class="lede">
           This service exists to move a play from your speaker to your own Last.fm and
@@ -80,7 +75,9 @@
           Only the services you connected. Plays go to Last.fm and ListenBrainz because that is
           what you asked for. Nothing is sold, and there is no analytics, no advertising and no
           third-party script on any page here — the content security policy this site sends
-          forbids loading one.
+          forbids loading one. The two typefaces are served from this domain rather than from
+          a font CDN, because a webfont request carries your IP address and the page you are
+          reading to whoever serves it.
         </p>
 
         <h2>Deleting everything</h2>

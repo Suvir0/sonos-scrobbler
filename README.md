@@ -173,6 +173,7 @@ rejects a replayed request carrying different content.
 | `src/lib/identity.ts` | the product name, version and User-Agent, in one place |
 | `src/routes/settings.ts` | the two playback-source opt-outs |
 | `public/` | the front page, privacy and terms pages, 404, icon, manifest |
+| `public/fonts/` | Archivo and IBM Plex Mono, self-hosted — see `fonts/README.md` |
 | `src/scrobble/session.ts` | the anchored clock — **the core of the service** |
 | `src/scrobble/rules.ts` | Last.fm's thresholds |
 | `src/scrobble/queue.ts` | durable queue with backoff, batch bisection, hashed dedupe |
@@ -268,6 +269,12 @@ ones this service uses. §2(c) may still require an additional license for comme
 | `GET /api/account`, `DELETE /api/account` | status, and delete everything |
 | `GET|PUT /api/settings` | radio and cast-playback opt-outs |
 | `POST /api/resync` | re-discover rooms and re-subscribe |
+
+The front end is the Claude Design comp, built as static assets with no framework and no
+build step. Its two typefaces are served from this domain: the content security policy
+forbids remote origins, and the privacy page's claim that no page makes a third-party
+request would otherwise be false, since a webfont fetch carries the visitor's IP and the
+page they are reading to whoever serves it.
 
 Every response carries a content security policy that forbids remote script, style,
 images and connections, plus `frame-ancestors 'none'` — the dashboard has a

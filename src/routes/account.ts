@@ -74,13 +74,14 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       return { group, snapshot: await stub.snapshot().catch(() => undefined) };
     })
   );
-  const nowPlaying: { room: string; artist: string; track: string }[] = [];
+  const nowPlaying: { room: string; artist: string; track: string; album?: string }[] = [];
   for (const { group, snapshot } of snapshots) {
     if (snapshot?.track && snapshot.playing) {
       nowPlaying.push({
         room: group.name ?? group.group_id,
         artist: snapshot.track.artist,
-        track: snapshot.track.track
+        track: snapshot.track.track,
+        ...(snapshot.track.album ? { album: snapshot.track.album } : {})
       });
     }
   }
