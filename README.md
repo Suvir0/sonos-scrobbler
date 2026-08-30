@@ -34,7 +34,7 @@ byte for byte.
 
 ### 1. Sonos — a new Control Integration
 
-Portal: <https://integration.sonos.com/integrations>
+Portal: <developer.sonos.com>
 
 1. Sign in with your Sonos account.
 2. **New control integration.** Create a new one rather than editing any integration that
