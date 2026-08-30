@@ -17,6 +17,7 @@ import type { Env } from '../env.js';
 import { encryptSecret, randomToken, sha256Hex } from '../lib/crypto.js';
 import { redirect } from '../lib/http.js';
 import { log } from '../lib/log.js';
+import { standDownDuplicateTargets } from '../lib/duplicates.js';
 import { currentRecoveryKey, userForRecoveryKey } from '../lib/recovery.js';
 import { createSession, currentUserId, sessionCookie } from '../lib/session.js';
 import { LastfmClient } from '../scrobble/lastfm-client.js';
@@ -112,6 +113,16 @@ async function linkHouseholds(env: Env, userId: string): Promise<void> {
       .run();
     await syncHousehold(env, userId, household.id, client, now);
   }
+
+  // The other order. Re-authorizing Sonos onto a fresh account leaves the target linked
+  // before the household rows exist, so the check at link time had nothing to match
+  // against; this is the first moment it can see the shared speakers. Both callers are
+  // needed because either step can be the later one.
+  const stoodDown = await standDownDuplicateTargets(env, userId);
+  if (stoodDown.length) {
+    log(env, 'info', 'targets.duplicate.resolved-on-household-sync', { count: stoodDown.length });
+  }
+
   log(env, 'info', 'sonos.link.complete', { households: households.length });
 }
 
@@ -241,6 +252,15 @@ async function saveTarget(
       now
     )
     .run();
+
+  // Now that this account holds the target, stand down any older account on the same
+  // speakers submitting to the same place. Runs here rather than at Sonos-link time
+  // because this is the moment the collision becomes real: an account with no target
+  // scrobbles nothing and doubles nothing.
+  const stoodDown = await standDownDuplicateTargets(env, userId);
+  if (stoodDown.length) {
+    log(env, 'info', 'targets.duplicate.resolved-on-link', { kind, count: stoodDown.length });
+  }
 
   // Send whatever was waiting on this credential.
   //

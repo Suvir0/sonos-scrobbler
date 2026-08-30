@@ -1,0 +1,15 @@
+-- What the scrobbling service actually said when it refused.
+--
+-- `needs_reauth` records that a credential stopped working; it cannot record why, so
+-- the page had one sentence for every possible cause: "the credentials were rejected".
+-- That sentence is wrong often enough to be harmful. ListenBrainz refuses submissions
+-- from an account with no verified email address, and says so at length in the response
+-- body — but it answers `validate-token` with `valid: true` for the same token. So
+-- pasting the token succeeds, the next play 401s, and the page advises reconnecting.
+-- Reconnecting validates the token again and changes nothing, which is a loop with no
+-- exit and no clue in it anywhere. The service's own explanation named the cause and
+-- linked the fix; it was discarded one function above the page that needed it.
+--
+-- Content-safe by construction: this holds a service's error text about a credential or
+-- a request, never a track. Nothing here is listening history.
+ALTER TABLE targets ADD COLUMN last_error TEXT;

@@ -19,6 +19,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
 import { hmacHex } from '../lib/crypto.js';
 import { decryptSecret } from '../lib/crypto.js';
+import { log } from '../lib/log.js';
 import { LastfmClient } from '../scrobble/lastfm-client.js';
 import { ListenBrainzClient } from '../scrobble/listenbrainz-client.js';
 import { ScrobbleQueue, scrobbleKey, type QueueStorage } from '../scrobble/queue.js';
@@ -147,24 +148,66 @@ export class UserQueue extends DurableObject<Env> {
       const queue = await this.queueFor(kind, target);
       const outcome = await queue.flush();
       if (outcome.status === 'retry') {
+        // Kept rather than discarded, but without setting `needs_reauth`: a retry is an
+        // outage or a rate limit, which resolves itself. The text is what turns "queued:
+        // 4" on the status page into something a person can act on.
+        log(this.env, 'warn', 'scrobble.flush.retry', { kind, message: outcome.message });
+        await this.recordError(userId, kind, outcome.message);
         retryAtMs = retryAtMs === undefined ? outcome.nextAttemptAtMs : Math.min(retryAtMs, outcome.nextAttemptAtMs);
       } else if (outcome.status === 'reauthorize') {
         // The credential is dead. Flag it so the site can prompt, and stop hammering
         // an endpoint that will refuse every request until the user acts.
+        //
+        // The message is stored alongside the flag because the flag alone is not enough
+        // to act on. ListenBrainz returns 401 for an unverified MetaBrainz email while
+        // answering `validate-token` with `valid: true` for the same token — so the one
+        // remedy the flag implies, reconnecting, provably cannot fix it. Only the
+        // service's own words say what will.
+        log(this.env, 'warn', 'scrobble.flush.reauthorize', { kind, message: outcome.message });
         await this.env.DB.prepare(
-          'UPDATE targets SET needs_reauth = 1, updated_at = ? WHERE user_id = ? AND kind = ?'
+          'UPDATE targets SET needs_reauth = 1, last_error = ?, updated_at = ? WHERE user_id = ? AND kind = ?'
         )
-          .bind(Date.now(), userId, kind)
+          .bind(truncateError(outcome.message), Date.now(), userId, kind)
           .run();
-      } else if (outcome.status === 'sent' && queue.size > 0) {
+      } else if (outcome.status === 'sent') {
+        // A delivery that lands is the only honest proof the credential works again, and
+        // nothing else ever cleared the flag. Without this, fixing the actual problem —
+        // verifying the email, waiting out the outage — left the page still reporting a
+        // rejected credential until the user happened to re-paste a token that was never
+        // the problem.
+        await this.clearError(userId, kind);
         // More waiting behind this batch; come straight back for it.
-        retryAtMs = Date.now();
+        if (queue.size > 0) retryAtMs = Date.now();
       }
     }
 
     if (retryAtMs !== undefined) {
       await this.ctx.storage.setAlarm(Math.max(retryAtMs, Date.now() + FLUSH_RETRY_FLOOR_MS));
     }
+  }
+
+  /** Records why a target is not accepting plays, without declaring its credential dead. */
+  private async recordError(userId: string, kind: TargetKind, message: string): Promise<void> {
+    await this.env.DB.prepare(
+      'UPDATE targets SET last_error = ?, updated_at = ? WHERE user_id = ? AND kind = ?'
+    )
+      .bind(truncateError(message), Date.now(), userId, kind)
+      .run();
+  }
+
+  /**
+   * Clears both the flag and the message once a delivery succeeds.
+   *
+   * Guarded on there being something to clear, so the overwhelmingly common case — a
+   * healthy target flushing a play — costs no write at all.
+   */
+  private async clearError(userId: string, kind: TargetKind): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE targets SET needs_reauth = 0, last_error = NULL, updated_at = ?
+        WHERE user_id = ? AND kind = ? AND (needs_reauth = 1 OR last_error IS NOT NULL)`
+    )
+      .bind(Date.now(), userId, kind)
+      .run();
   }
 
   override async alarm(): Promise<void> {
@@ -187,4 +230,17 @@ export class UserQueue extends DurableObject<Env> {
     await this.ctx.storage.deleteAll();
     await this.ctx.storage.deleteAlarm();
   }
+}
+
+/**
+ * Bounds a stored error message.
+ *
+ * These come from another service and are not length-limited by anything we control;
+ * ListenBrainz's unverified-email refusal is close to three hundred characters on its
+ * own. Long enough to keep a whole explanation and the URL that goes with it, short
+ * enough that a service having a bad day cannot grow the row without limit.
+ */
+function truncateError(message: string): string {
+  const trimmed = message.trim();
+  return trimmed.length <= 400 ? trimmed : `${trimmed.slice(0, 399)}…`;
 }

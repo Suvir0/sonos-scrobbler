@@ -19,9 +19,17 @@ import { currentRecoveryKey, issueRecoveryKey, recoveryUrl } from '../lib/recove
 
 export async function accountStatus(env: Env, userId: string): Promise<Response> {
   const [targets, households, groups] = await Promise.all([
-    env.DB.prepare('SELECT kind, username, enabled, needs_reauth FROM targets WHERE user_id = ?')
+    env.DB.prepare(
+      'SELECT kind, username, enabled, needs_reauth, last_error FROM targets WHERE user_id = ?'
+    )
       .bind(userId)
-      .all<{ kind: string; username: string | null; enabled: number; needs_reauth: number }>(),
+      .all<{
+        kind: string;
+        username: string | null;
+        enabled: number;
+        needs_reauth: number;
+        last_error: string | null;
+      }>(),
     env.DB.prepare('SELECT household_id, name FROM households WHERE user_id = ?')
       .bind(userId)
       .all<{ household_id: string; name: string | null }>(),
@@ -114,7 +122,12 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       kind: row.kind,
       username: row.username,
       enabled: row.enabled === 1,
-      needsReauth: row.needs_reauth === 1
+      needsReauth: row.needs_reauth === 1,
+      // What the service itself said. The page prefers this over its own wording,
+      // because a generic "credentials were rejected" is wrong whenever the credential
+      // was not the problem — and it is the cases where it is wrong that leave somebody
+      // re-pasting a working token forever.
+      lastError: row.last_error
     })),
     households: (households.results ?? []).map((row) => ({
       id: row.household_id,
