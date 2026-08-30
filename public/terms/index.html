@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Terms · Scrobbler for Sonos</title>
+    <meta name="description" content="The terms this service is offered under." />
+    <meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#14120d" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/fonts/Archivo-variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <a class="wordmark" href="/">Scrobbler <em>for</em> Sonos</a>
+      </header>
+      <article class="prose">
+
+        <h1>Terms</h1>
+        <p class="lede">
+          Short, because the service is small: it reads what your Sonos plays and forwards it to
+          the scrobbling accounts you connected.
+        </p>
+
+        <h2>What you are agreeing to</h2>
+        <ul>
+          <li>
+            You are connecting accounts you control — your Sonos household, your Last.fm
+            account, your ListenBrainz token.
+          </li>
+          <li>
+            You may stop at any time by signing out, pressing <strong>Delete everything</strong>,
+            or revoking the integration from your Sonos account.
+          </li>
+          <li>
+            You will not use the service to submit plays you did not listen to. Last.fm and
+            ListenBrainz both prohibit that, and it is their accounts at risk, not ours.
+          </li>
+        </ul>
+
+        <h2>What is not promised</h2>
+        <p>
+          The service is provided as is, with no warranty and no uptime guarantee. It depends on
+          three external services — Sonos's event delivery, Last.fm's API and ListenBrainz's API
+          — any of which can change or stop. Sonos in particular discards an event it cannot
+          deliver, so a play that happens during an outage is not recoverable.
+        </p>
+        <p>
+          A play that a scrobbling service rejects outright is discarded rather than retried
+          forever — a request it will never accept would otherwise jam every play queued
+          behind it. Individual rejections are not listed anywhere; the status page reports
+          the state of the connection, not the fate of each play. Your own Last.fm and
+          ListenBrainz history is the record of what was accepted.
+        </p>
+
+        <h2>Not a Sonos product</h2>
+        <p>
+          Not affiliated with, endorsed by, or sponsored by Sonos, Last.fm or MetaBrainz. Sonos
+          is a trademark of Sonos, Inc., used here only to say what this works with. Last.fm and
+          ListenBrainz are the trademarks of their respective owners.
+        </p>
+
+        <h2>The software itself</h2>
+        <p>
+          Open source under the MIT licence, which disclaims warranties and liability in its
+          own words as well as these. You may run your own copy; these terms cover this
+          deployment. See the <a href="/colophon">colophon</a>.
+        </p>
+
+        <h2>Changes</h2>
+        <p>
+          These terms can change; the version in effect is the one on this page. A change that
+          affects what is stored will be reflected on the <a href="/privacy">privacy page</a> at
+          the same time.
+        </p>
+      </article>
+      <footer>
+        <nav>
+          <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/colophon">Colophon</a>
+        </nav>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -8,7 +8,7 @@
  * every trace, including the Durable Objects that D1's cascade cannot reach.
  */
 
-import type { Env } from './../env.js';
+import type { Env } from '../env.js';
 import { json } from '../lib/http.js';
 import { log } from '../lib/log.js';
 import { clientForUser } from '../sonos/account.js';
@@ -53,17 +53,35 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
     .bind(userId)
     .first<{ last_scrobble_at: number | null }>();
 
+  // Whether the Sonos grant itself is still good. Last.fm and ListenBrainz each report
+  // this; the connection without which nothing works at all did not, so a revoked grant
+  // looked identical to a quiet house.
+  const sonos = await env.DB.prepare(
+    'SELECT needs_reauth FROM sonos_accounts WHERE user_id = ?'
+  )
+    .bind(userId)
+    .first<{ needs_reauth: number }>();
+
   // What is playing right now, read live from the session objects. Not stored, not
   // historical — it disappears when playback does.
-  const nowPlaying: { room: string; artist: string; track: string }[] = [];
-  for (const group of groups.results ?? []) {
-    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(group.group_id));
-    const snapshot = await stub.snapshot().catch(() => undefined);
+  //
+  // Read in parallel. The page polls this every fifteen seconds, and one sequential
+  // round trip per group means a house with thirty rooms pays thirty serialized DO
+  // hops on every poll, for as long as a tab is open.
+  const snapshots = await Promise.all(
+    (groups.results ?? []).map(async (group) => {
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(group.group_id));
+      return { group, snapshot: await stub.snapshot().catch(() => undefined) };
+    })
+  );
+  const nowPlaying: { room: string; artist: string; track: string; album?: string }[] = [];
+  for (const { group, snapshot } of snapshots) {
     if (snapshot?.track && snapshot.playing) {
       nowPlaying.push({
         room: group.name ?? group.group_id,
         artist: snapshot.track.artist,
-        track: snapshot.track.track
+        track: snapshot.track.track,
+        ...(snapshot.track.album ? { album: snapshot.track.album } : {})
       });
     }
   }
@@ -80,6 +98,7 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       name: row.name
     })),
     rooms: (groups.results ?? []).map((row) => row.name ?? row.group_id),
+    sonos: { connected: sonos !== null, needsReauth: (sonos?.needs_reauth ?? 0) === 1 },
     subscriptions: {
       total: subs?.total ?? 0,
       failing: subs?.failing ?? 0,

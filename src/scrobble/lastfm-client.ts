@@ -13,6 +13,7 @@
  * reuse this untouched and tests never open a socket.
  */
 
+import { USER_AGENT } from '../lib/identity.js';
 import { md5 } from '../lib/md5.js';
 import {
   SubmissionError,
@@ -218,7 +219,10 @@ export class LastfmClient implements ScrobbleTarget {
     try {
       response = await this.dependencies.fetch(LASTFM_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': USER_AGENT
+        },
         body: form.toString(),
         signal: AbortSignal.timeout(this.dependencies.timeoutMs)
       });

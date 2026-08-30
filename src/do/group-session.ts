@@ -135,7 +135,14 @@ export class GroupSession extends DurableObject<Env> {
     // stopped, queue ended) so the play is over rather than suspended.
     const idle = status.playbackState === 'PLAYBACK_STATE_IDLE';
     if (idle) {
-      const outcome = await this.finalizeCurrent(current, nowMs, positionMs);
+      // Deliberately not passing `positionMs` as the final position. An IDLE event is
+      // the queue ending, and Sonos reports position 0 on it as often as it reports
+      // where the track actually stopped — forcing that in clamps the last stretch of
+      // credit to nothing and drops a scrobble that had already been earned. Leaving it
+      // out lets `finalizeCurrent` use its documented order instead: the
+      // `previousPositionMillis` hint this same event may have just stored, then the
+      // derived clock.
+      const outcome = await this.finalizeCurrent(current, nowMs);
       await this.ctx.storage.delete('session');
       await this.rescheduleAlarm(nowMs);
       return outcome;
@@ -282,7 +289,12 @@ export class GroupSession extends DurableObject<Env> {
       // that reports a duration — radio has no end to predict.
       if (session.playing && session.track.durationMs !== undefined) {
         const remaining = session.track.durationMs - session.anchorPositionMs;
-        candidates.push(nowMs + Math.max(0, remaining) + BACKSTOP_SLACK_MS);
+        // From the anchor, not from `nowMs`, so this is the same instant `expectedEndMs`
+        // compares against when the alarm fires. They diverge on a metadata-only refresh,
+        // which reschedules without moving the anchor: measured from `nowMs` the alarm
+        // would land after the deadline it is meant to detect, delaying recovery of a
+        // lost end-of-track event by however long the refresh came after the anchor.
+        candidates.push(session.anchorWallMs + Math.max(0, remaining) + BACKSTOP_SLACK_MS);
       }
     }
 

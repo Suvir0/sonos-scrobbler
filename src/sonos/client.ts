@@ -13,6 +13,7 @@
  *    and is retried once against a freshly refreshed token.
  */
 
+import { USER_AGENT } from '../lib/identity.js';
 import { sonosBudget, type RequestBudget } from './budget.js';
 import type { GroupsStatus, MetadataStatus, PlaybackStatus, SonosHousehold } from './types.js';
 
@@ -76,7 +77,8 @@ export class SonosClient {
       headers: {
         ...init.headers,
         authorization: `Bearer ${token}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'user-agent': USER_AGENT
       }
     });
 

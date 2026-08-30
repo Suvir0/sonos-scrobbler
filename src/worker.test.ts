@@ -1,6 +1,9 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { encryptSecret, sonosEventSignature } from './lib/crypto.js';
+import { encryptSecret, sha256Hex, sonosEventSignature } from './lib/crypto.js';
+import { createSession, SESSION_COOKIE } from './lib/session.js';
+import { OAUTH_STATE_TTL_MS } from './do/oauth-state.js';
+import { SECURITY_CONTACT } from './routes/health.js';
 import { applySchema, resetTables } from './testing/schema.js';
 
 const CLIENT_ID = 'test-client-id';
@@ -228,15 +231,20 @@ describe('routing', () => {
         encryption: 'ok',
         scrobbleKeySalt: 'ok',
         sessionSecret: 'ok',
-        database: 'ok'
+        database: 'ok',
+        schema: 'ok'
       }
     });
   });
 
+  // A JSON 401 rather than a redirect: the dashboard polls this endpoint, and a 302 to
+  // an HTML page reads as a successful response until the JSON parse fails.
   it('refuses account access without a session', async () => {
     const response = await SELF.fetch('https://example.com/api/account', { redirect: 'manual' });
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toContain('signin_required');
+    expect(response.status).toBe(401);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      'signin_required'
+    );
   });
 
   it('sends a user to Sonos to authorize, with a single-use state', async () => {
@@ -256,6 +264,39 @@ describe('routing', () => {
     );
   });
 
+  // Sonos is the only identity this service has, so a sign-in that always minted a new
+  // account meant an expired cookie stranded the old one: still holding a live refresh
+  // token and the user's Last.fm session key, and past the reach of the delete button,
+  // which only deletes whoever is signed in.
+  it('carries a signed-in user through the Sonos round trip instead of minting a second account', async () => {
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+      .bind(USER_ID, Date.now())
+      .run();
+    const cookie = `${SESSION_COOKIE}=${await createSession(env, USER_ID)}`;
+
+    const start = await SELF.fetch('https://example.com/auth/sonos/start', {
+      headers: { cookie },
+      redirect: 'manual'
+    });
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+
+    const stub = env.OAUTH_STATES.get(env.OAUTH_STATES.idFromName(await sha256Hex(state)));
+    const payload = await stub.consume(Date.now());
+    expect(payload?.userId).toBe(USER_ID);
+  });
+
+  it('issues state with no user attached when nobody is signed in', async () => {
+    const start = await SELF.fetch('https://example.com/auth/sonos/start', {
+      redirect: 'manual'
+    });
+    const state = new URL(start.headers.get('location')!).searchParams.get('state')!;
+    const stub = env.OAUTH_STATES.get(env.OAUTH_STATES.idFromName(await sha256Hex(state)));
+    const payload = await stub.consume(Date.now());
+    expect(payload).toBeDefined();
+    expect(payload?.userId).toBeUndefined();
+    expect(Date.now() - payload!.createdAtMs).toBeLessThan(OAUTH_STATE_TTL_MS);
+  });
+
   it('refuses a callback carrying an unknown state', async () => {
     const response = await SELF.fetch(
       'https://example.com/auth/sonos/callback?code=abc&state=never-issued',
@@ -263,5 +304,141 @@ describe('routing', () => {
     );
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toContain('sonos_state');
+  });
+});
+
+
+describe('hardening', () => {
+  beforeEach(async () => {
+    await applySchema();
+    await resetTables();
+  });
+
+  async function signedIn(): Promise<string> {
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+      .bind(USER_ID, Date.now())
+      .run();
+    return `${SESSION_COOKIE}=${await createSession(env, USER_ID)}`;
+  }
+
+  // The page is a single document whose styles and script are inline, so the policy can
+  // forbid every remote origin outright. `frame-ancestors 'none'` is the load-bearing
+  // one: the dashboard has a delete-everything button.
+  it('applies a content security policy to the page itself, not just to API responses', async () => {
+    const response = await SELF.fetch('https://example.com/');
+    const csp = response.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('strict-transport-security')).toContain('max-age=');
+  });
+
+  // SameSite=Lax already blocks this in a browser that implements it strictly, but Lax
+  // has to stay for the OAuth callbacks, so the Origin check is what actually closes it.
+  it('refuses a state-changing request carrying somebody else\'s Origin', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/account', {
+      method: 'DELETE',
+      headers: { cookie, origin: 'https://attacker.example' }
+    });
+    expect(response.status).toBe(403);
+    // And the account is still there.
+    expect(
+      await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(USER_ID).first()
+    ).toBeTruthy();
+  });
+
+  it('accepts the same request from its own origin', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, origin: 'https://example.com', 'content-type': 'application/json' },
+      body: JSON.stringify({ scrobbleRadio: false })
+    });
+    expect(response.status).toBe(200);
+  });
+
+  // Both columns shipped in the first migration and neither was reachable, so every
+  // account ran on the defaults. The round trip is what proves they now are.
+  it('stores and reads back the playback-source settings', async () => {
+    const cookie = await signedIn();
+
+    expect(
+      await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
+    ).toEqual({ scrobbleRadio: true, allowHandoff: false });
+
+    await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ scrobbleRadio: false })
+    });
+
+    // A partial update leaves the key it did not mention alone.
+    expect(
+      await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
+    ).toEqual({ scrobbleRadio: false, allowHandoff: false });
+  });
+
+  // A 200 carrying the old value is worse than an error: the page reports "Saved" and
+  // the setting has not moved.
+  it('refuses a settings value that is not a boolean rather than ignoring it', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ scrobbleRadio: 'false' })
+    });
+    expect(response.status).toBe(400);
+    expect(
+      await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
+    ).toEqual({ scrobbleRadio: true, allowHandoff: false });
+  });
+
+  it('refuses a body that is not a JSON object', async () => {
+    const cookie = await signedIn();
+    const response = await SELF.fetch('https://example.com/api/settings', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: 'not json'
+    });
+    expect(response.status).toBe(400);
+  });
+
+  // A Worker deploy and a D1 migration are separate steps, so code reaches production
+  // ahead of its schema sooner or later. Without this the symptom is a 500 from
+  // /api/account and a blank dashboard for every user, with nothing saying why.
+  it('reports degraded when the database is missing a column this build needs', async () => {
+    await env.DB.prepare('ALTER TABLE sonos_accounts DROP COLUMN needs_reauth').run();
+
+    const response = await SELF.fetch('https://example.com/healthz');
+    expect(response.status).toBe(503);
+
+    const body = (await response.json()) as { status: string; checks: { schema: string } };
+    expect(body.status).toBe('degraded');
+    expect(body.checks.schema).toContain('sonos_accounts.needs_reauth');
+    expect(body.checks.schema).toContain('db:remote');
+  });
+
+  // Served from the Worker rather than from public/, because Wrangler's asset upload
+  // does not reliably include dot-directories and a security contact that 404s is worse
+  // than not publishing one.
+  it('publishes an unexpired security.txt with a reachable contact', async () => {
+    const response = await SELF.fetch('https://example.com/.well-known/security.txt');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+
+    const body = await response.text();
+    expect(body).toContain(`Contact: mailto:${SECURITY_CONTACT}`);
+    expect(body).toContain(`Canonical: ${env.PUBLIC_BASE_URL}/.well-known/security.txt`);
+
+    const expires = /Expires: (\S+)/.exec(body)?.[1];
+    expect(Date.parse(expires!)).toBeGreaterThan(Date.now());
+  });
+
+  // A wrong verb on a known path used to fall through to the assets binding and come
+  // back as the HTML front page with a 200 on it.
+  it('answers a known API path with the wrong method as 405, not as the front page', async () => {
+    const response = await SELF.fetch('https://example.com/api/settings', { method: 'DELETE' });
+    expect(response.status).toBe(405);
   });
 });

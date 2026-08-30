@@ -13,7 +13,11 @@
 
   "assets": {
     "directory": "./public",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // A real 404 page. Without this, an unmatched path falls through to the front page
+    // with a 200 on it, which is what search engines index and what makes a broken link
+    // look like a working one.
+    "not_found_handling": "404-page"
   },
 
   "vars": {

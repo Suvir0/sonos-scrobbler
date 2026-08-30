@@ -17,21 +17,29 @@ import type { Env } from '../env.js';
 import { encryptSecret, randomToken, sha256Hex } from '../lib/crypto.js';
 import { problem, redirect } from '../lib/http.js';
 import { log } from '../lib/log.js';
-import { createSession, sessionCookie } from '../lib/session.js';
+import { createSession, currentUserId, sessionCookie } from '../lib/session.js';
 import { LastfmClient } from '../scrobble/lastfm-client.js';
 import { ListenBrainzClient } from '../scrobble/listenbrainz-client.js';
 import { clientForUser, oauthConfig, saveTokens } from '../sonos/account.js';
-import { buildAuthorizeUrl, exchangeCode } from '../sonos/oauth.js';
+import { buildAuthorizeUrl, exchangeCode, SonosGrantRevoked } from '../sonos/oauth.js';
 import { syncHousehold } from '../subscriptions.js';
 
 /* ------------------------------------------------------------------- sonos */
 
 export async function startSonosLink(request: Request, env: Env): Promise<Response> {
   const state = randomToken(32);
+  // Carry the signed-in user through the round trip, so re-authorizing updates the
+  // account that is already here. Without it every trip through Sonos mints a fresh
+  // one — and because Sonos is the only identity this service has, the old account
+  // becomes unreachable: still holding a live refresh token and the user's Last.fm
+  // session key, still counted in the database, and past the reach of the delete
+  // button, which only ever deletes whoever is signed in.
+  const userId = await currentUserId(request, env);
+
   // The DO is keyed by the hash so the raw state never becomes a storage key that
   // could leak through a listing or a log.
   const stub = env.OAUTH_STATES.get(env.OAUTH_STATES.idFromName(await sha256Hex(state)));
-  await stub.issue({ createdAtMs: Date.now() });
+  await stub.issue({ createdAtMs: Date.now(), ...(userId ? { userId } : {}) });
   return redirect(buildAuthorizeUrl(oauthConfig(env), state));
 }
 
@@ -50,8 +58,21 @@ export async function completeSonosLink(
   // Single use: a replayed callback finds nothing and is refused.
   if (!payload) return redirect('/?error=sonos_state');
 
-  const tokens = await exchangeCode(oauthConfig(env), code, { nowMs: Date.now() });
+  let tokens;
+  try {
+    tokens = await exchangeCode(oauthConfig(env), code, { nowMs: Date.now() });
+  } catch (error) {
+    // A code that Sonos will not exchange is spent, expired or forged. There is nothing
+    // to retry and nothing useful to say beyond asking for the link again.
+    log(env, 'warn', 'sonos.link.exchange-failed', {
+      revoked: error instanceof SonosGrantRevoked,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return redirect('/?error=sonos_denied');
+  }
 
+  // An existing account when the user was signed in when they started; a new one only
+  // when there is genuinely nobody to attach this grant to.
   const userId = payload.userId ?? randomToken(16);
   const now = Date.now();
   await env.DB.prepare('INSERT OR IGNORE INTO users (id, created_at) VALUES (?, ?)')

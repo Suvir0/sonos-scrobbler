@@ -1,5 +1,8 @@
 # Scrobbler for Sonos
 
+[![CI](https://github.com/Suvir0/sonos-scrobbler/actions/workflows/ci.yml/badge.svg)](https://github.com/Suvir0/sonos-scrobbler/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Scrobbles what your Sonos speakers play to **Last.fm** and **ListenBrainz**, with nothing
 running at home. Sonos's cloud pushes playback events to this service; it derives how long
 each track was actually listened to and submits the ones that qualify.
@@ -22,22 +25,26 @@ Do these in order. Steps 1 and 2 must be done before anything can be tested end 
 Everything below hard-codes it, and changing it later means re-registering URLs in two
 portals. The working default is `https://scrobbler.suvir.net`.
 
-`suvir.net` must be on Cloudflare DNS for the custom-domain route. Until it is, `wrangler.jsonc`
-ships with `workers_dev: true` and a `*.workers.dev` URL; flip `workers_dev` to `false` and
-uncomment `routes` once DNS is ready, then update `PUBLIC_BASE_URL` in `vars` **and** both URLs
-in the Sonos portal.
+`suvir.net` must be on Cloudflare DNS for the custom-domain route, which is what provisions
+the CA-signed certificate the Sonos event callback requires. `wrangler.jsonc` ships configured
+for it: `workers_dev: false` and a `routes` entry for `scrobbler.suvir.net`. To deploy
+somewhere else, change `PUBLIC_BASE_URL` in `vars`, the `routes` entry (or set
+`workers_dev: true` and delete it), **and** both URLs in the Sonos portal — they must match
+byte for byte.
 
 ### 1. Sonos — a new Control Integration
 
 Portal: <https://integration.sonos.com/integrations>
 
 1. Sign in with your Sonos account.
-2. **New control integration.** Do *not* edit the existing *PhoneThing* integration.
-3. Enter a **Name**, **Description** and **Category**.
-   - The name is what users see on the Sonos consent screen.
-   - ⚠️ The **Company Name** field appears to be organization-level and pre-fills with
-     "PhoneThing". Confirm whether editing it renames the existing integration before you
-     touch it. If unsure, leave it.
+2. **New control integration.** Create a new one rather than editing any integration that
+   already exists on the account.
+3. Enter **Name** `Scrobbler for Sonos`, a **Description** and a **Category**.
+   - The name is what users see on the Sonos consent screen, so it must read as this
+     product and nothing else.
+   - ⚠️ The **Company Name** field appears to be organization-level and is shared with
+     every other integration on the account. Confirm whether editing it renames those
+     before you touch it. If unsure, leave it.
 4. **Continue** → enter a key name (e.g. `scrobbler-prod`) → **Save**.
 5. Copy the **Client ID** and **Client Secret**. The secret is shown once.
 6. **Add redirect URI** → `https://scrobbler.suvir.net/auth/sonos/callback`
@@ -85,6 +92,12 @@ Put the printed `database_id` into `wrangler.jsonc`, then apply the schema and s
 ```bash
 npm run db:remote
 ```
+
+That applies **every** file in `migrations/` in order, not just the first — the two later
+migrations add columns the status page reads, and a database missing them fails at runtime
+rather than at deploy. The `ALTER TABLE` statements in them are not idempotent, so the
+script is a first-apply tool: running it twice stops on "duplicate column name", which is
+the correct outcome for an already-migrated database.
 
 ```bash
 for s in SONOS_CLIENT_ID SONOS_CLIENT_SECRET LASTFM_API_KEY LASTFM_API_SECRET TOKEN_ENCRYPTION_KEY SCROBBLE_KEY_SALT SESSION_SECRET; do npx wrangler secret put "$s"; done
@@ -158,7 +171,12 @@ rejects a replayed request carrying different content.
 
 | Path | |
 |---|---|
-| `src/index.ts` | routing and the scheduled renewal sweep |
+| `src/index.ts` | routing, the origin check, and the scheduled renewal sweep |
+| `src/lib/http.ts` | response helpers, the security headers, the same-origin check |
+| `src/lib/identity.ts` | the product name, version and User-Agent, in one place |
+| `src/routes/settings.ts` | the two playback-source opt-outs |
+| `public/` | the front page, privacy and terms pages, 404, icon, manifest |
+| `public/fonts/` | Archivo and IBM Plex Mono, self-hosted — see `fonts/README.md` |
 | `src/scrobble/session.ts` | the anchored clock — **the core of the service** |
 | `src/scrobble/rules.ts` | Last.fm's thresholds |
 | `src/scrobble/queue.ts` | durable queue with backoff, batch bisection, hashed dedupe |
@@ -167,12 +185,13 @@ rejects a replayed request carrying different content.
 | `src/sonos/events.ts` | signature verification and the replay guard |
 | `src/sonos/{oauth,account,client}.ts` | authorization, token refresh, Control API |
 | `src/subscriptions.ts` | subscribe, renew, follow group changes |
+| `migrations/0004_sonos_reauth.sql` | the flag that says a Sonos grant was revoked |
 | `src/do/` | Durable Objects: group session, user queue, OAuth state |
 | `src/sonos/budget.ts` | our own request ceiling, below Sonos's shared quota |
 | `src/testing/replay.ts` | the event replay harness — see below |
 
-`target.ts`, `queue.ts`, `lastfm-client.ts`, `listenbrainz-client.ts` and `lib/musicbrainz.ts`
-are ported from the Spinledger desktop app along with their test suites. `queue.ts` gained an
+`target.ts`, `queue.ts`, `lastfm-client.ts` and `listenbrainz-client.ts` are ported from a
+desktop scrobbler along with their test suites. `queue.ts` gained an
 injectable dedupe key so this deployment can store HMACs instead of track titles.
 
 ### Testing against reality, not against fixtures
@@ -214,6 +233,11 @@ and asserts it gets refused.
 npm install && npm test
 ```
 
+`npm run check:assets` checks the static pages: every reference local and present, no
+remote subresource the content security policy would block at runtime, and the two font
+licences still shipping. There is no build step, so nothing else would catch a page
+pointing at a file that is not there. CI runs it alongside the tests and the type check.
+
 ```bash
 npm run dev
 ```
@@ -238,3 +262,179 @@ deletes the user row that every other table cascades from.
 
 **§2(b)**'s separate-commercial-license requirement applies to the **LAN** APIs, not the Cloud
 ones this service uses. §2(c) may still require an additional license for commercial use.
+
+---
+
+## Public endpoints
+
+| | |
+|---|---|
+| `GET /` | the whole product: link accounts, see status, change settings |
+| `GET /privacy`, `GET /terms` | what is stored and under what terms |
+| `GET /healthz` | round-trips encryption and both HMAC keys, touches D1 |
+| `GET /colophon` | what it is built from, and under which licences |
+| `GET /.well-known/security.txt` | RFC 9116; served from the Worker, not `public/` |
+| `POST /webhooks/sonos` | the Sonos event callback |
+| `/auth/sonos/*`, `/auth/lastfm/*`, `POST /auth/listenbrainz` | linking |
+| `GET /api/account`, `DELETE /api/account` | status, and delete everything |
+| `GET|PUT /api/settings` | radio and cast-playback opt-outs |
+| `POST /api/resync` | re-discover rooms and re-subscribe |
+
+The front end is the Claude Design comp, built as static assets with no framework and no
+build step. Its two typefaces are served from this domain: the content security policy
+forbids remote origins, and the privacy page's claim that no page makes a third-party
+request would otherwise be false, since a webfont fetch carries the visitor's IP and the
+page they are reading to whoever serves it.
+
+Every response carries a content security policy that forbids remote script, style,
+images and connections, plus `frame-ancestors 'none'` — the dashboard has a
+delete-everything button, and clickjacking it is unrecoverable. Every state-changing
+method is refused unless its `Origin` is this site, on top of the `SameSite=Lax` cookie.
+
+## Before opening signups
+
+- [ ] `npm test` and `npm run type-check` clean.
+- [ ] `npm run db:remote` has applied **all** of `migrations/`, not just `0001`.
+- [ ] All seven secrets set (`wrangler secret list`), and `GET /healthz` returns `ok` —
+      not just 200, the body's `status`.
+- [ ] Sonos portal: redirect URI and Event Callback URL both point at the deployed
+      origin, exactly. A trailing slash difference fails the OAuth exchange.
+- [ ] Last.fm portal: callback URL matches, homepage set.
+- [ ] Link a real account end to end, play a track, and confirm **Last scrobble** moves
+      on the status page. A green tick with `never` next to it means the pipeline is
+      not connected.
+- [ ] Decide the identity question in **Known limits** below. Every signed-out
+      reconnect currently strands an account holding live credentials its owner
+      cannot see or delete, which is in tension with the §8(b) claim on the privacy
+      page. This is the one open blocker in the code.
+- [ ] Point an uptime check at `/healthz` that alerts on the body's `status`, not just
+      on a 200, and add a Cloudflare notification on Worker error rate.
+- [ ] Confirm the zero-retention design with Sonos developer support before opening
+      signups — the legal notes below are why.
+- [ ] `TOKEN_ENCRYPTION_KEY` is backed up somewhere you will still have it in a year.
+      Rotating it locks every existing user out permanently.
+
+## Known limits, and why they are limits
+
+Three things a reviewer will notice. None is a bug; each is a deliberate boundary, and
+the first is the one to resolve before signups open.
+
+### Sonos is the only identity, and there is no way to re-find an account without a cookie
+
+Starting a link while signed in now carries the user through the OAuth round trip, so a
+reconnect updates the account that already exists. A user who arrives with **no session**
+— cookie cleared, thirty days elapsed, a different browser — still gets a new account,
+because nothing Sonos returns identifies the person.
+
+The obvious fix, matching on household id, is worse than the problem: a Sonos household
+can have more than one member, so adopting an existing account whose household matches
+would hand one person another person's Last.fm session key. That is not a trade worth
+making, so the code does not make it.
+
+What is left is real and unresolved: the previous account keeps a live refresh token and
+an encrypted Last.fm credential, is invisible to its owner, and cannot be reached by
+`DELETE /api/account`, which only ever deletes whoever is signed in. Two ways out, and
+one has to be chosen before public signups:
+
+- a second identity the user controls — an email magic link, say — so an account can be
+  found again without a Sonos round trip; or
+- a stable Sonos-side identifier, if developer support can name one. Nothing in the
+  Control API's households response is documented as per-user.
+
+The same gap is why two members of one household do not work today: `subscriptions.id`
+is not scoped by user and `GroupSession` is keyed by group alone, so the second person to
+link takes over the first person's subscriptions. Scoping both by user is the fix, and it
+touches the event dispatch path — worth doing deliberately rather than alongside a rename.
+
+### The request budget is per isolate, not global
+
+`src/sonos/budget.ts` refuses at 600/min and 20/sec inside one isolate. At one household
+that is the whole application. At public traffic it is not: several isolates each holding
+their own 600/min ceiling can sum past Sonos's shared 1,000/min before any one of them
+notices. A Durable Object holding the counter is the fix, and it costs a hop on every
+Sonos request — worth paying once traffic is past one isolate's worth, not before.
+
+### Nothing pages anybody
+
+`GET /healthz` round-trips the encryption and both HMAC keys and touches D1, and
+distinguishes "200 but degraded" from "ok" in the body rather than the status alone. But
+nothing watches it. Before signups: point an uptime check at it that alerts on the body's
+`status`, and add a Cloudflare notification on Worker error rate. A cron run reporting
+`failed > 0` and a `waitUntil` that throws are both `console.warn` lines and nothing more.
+
+---
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE). You can read it, run your own copy, and change it.
+
+The MIT licence covers the source only. The two bundled typefaces, **Archivo** and **IBM
+Plex Mono**, are under the SIL Open Font License 1.1 and ship with their own licence
+files in `public/fonts/`, which that licence requires. [`NOTICE`](NOTICE) has the full
+attribution, including the trademark position on Sonos, Last.fm and ListenBrainz.
+
+Being able to read the source is what makes the privacy page checkable rather than
+merely stated: that there is no history table is a fact about `migrations/0001_init.sql`,
+not a promise.
+
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability, and what is already known.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — what this codebase asks of a change.
+- [`CHANGELOG.md`](CHANGELOG.md) — what shipped in 1.0.0.
+
+## Deploying
+
+No trailing `#` comments in any of the commands below. An interactive `zsh` — the
+default shell on macOS — does not treat `#` as a comment unless `interactive_comments`
+is set, so a pasted `npm run db:remote  # first deploy only` passes the words after the
+`#` to wrangler as arguments and the command fails without running.
+
+**Deploy the schema before the code.** A Worker deploy and a D1 migration are separate
+steps, and code that reads a column its database does not have yet answers 500 from
+`/api/account` — a blank dashboard for everyone. `/healthz` now names the missing column
+if this happens, but the ordering is what avoids it.
+
+Once, as the account that owns the domain:
+
+```bash
+npx wrangler login
+```
+
+Every time the `migrations/` directory has gained a file since the last deploy:
+
+```bash
+npm run db:remote
+```
+
+That applies every file in order. The `ALTER TABLE`s in the later migrations are not
+idempotent, so re-applying one that is already live stops on `duplicate column name` —
+which is the correct outcome, not a failure to work around.
+
+Then:
+
+```bash
+npm run deploy
+```
+
+Confirm it actually works rather than merely responds. Read the body, not the status
+code: a 200 carrying `"status": "degraded"` is a Worker that is up and cannot scrobble.
+
+```bash
+curl -s https://scrobbler.suvir.net/healthz
+```
+
+```bash
+curl -s https://scrobbler.suvir.net/.well-known/security.txt
+```
+
+`checks.schema` names any column the deployed code needs and the database lacks;
+`checks.config` names any secret that is unset; `checks.encryption` fails when
+`TOKEN_ENCRYPTION_KEY` does not decode to exactly 32 bytes.
+
+Check what actually shipped, too — a deploy from a stale checkout is silent:
+
+```bash
+npx wrangler deployments list
+```
+
+The asset count in the deploy output is the quickest tell. This branch has fifteen files
+under `public/`; if wrangler reports reading one, it is deploying an old commit.
