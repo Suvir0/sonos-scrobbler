@@ -383,19 +383,58 @@ not a promise.
 
 ## Deploying
 
+No trailing `#` comments in any of the commands below. An interactive `zsh` — the
+default shell on macOS — does not treat `#` as a comment unless `interactive_comments`
+is set, so a pasted `npm run db:remote  # first deploy only` passes the words after the
+`#` to wrangler as arguments and the command fails without running.
+
+**Deploy the schema before the code.** A Worker deploy and a D1 migration are separate
+steps, and code that reads a column its database does not have yet answers 500 from
+`/api/account` — a blank dashboard for everyone. `/healthz` now names the missing column
+if this happens, but the ordering is what avoids it.
+
+Once, as the account that owns the domain:
+
 ```bash
-npx wrangler login          # once, as the account that owns scrobbler.suvir.net
-npm run db:remote           # first deploy only — applies every migration in order
+npx wrangler login
+```
+
+Every time the `migrations/` directory has gained a file since the last deploy:
+
+```bash
+npm run db:remote
+```
+
+That applies every file in order. The `ALTER TABLE`s in the later migrations are not
+idempotent, so re-applying one that is already live stops on `duplicate column name` —
+which is the correct outcome, not a failure to work around.
+
+Then:
+
+```bash
 npm run deploy
 ```
 
-Then confirm the deploy actually works rather than merely responding:
+Confirm it actually works rather than merely responds. Read the body, not the status
+code: a 200 carrying `"status": "degraded"` is a Worker that is up and cannot scrobble.
 
 ```bash
-curl -s https://scrobbler.suvir.net/healthz | jq .status   # must print "ok", not "degraded"
+curl -s https://scrobbler.suvir.net/healthz
+```
+
+```bash
 curl -s https://scrobbler.suvir.net/.well-known/security.txt
 ```
 
-A 200 from `/healthz` with `"status": "degraded"` means the Worker is up and cannot
-scrobble — a mistyped secret, or an encryption key that does not decode to 32 bytes. The
-body is the check, not the status code.
+`checks.schema` names any column the deployed code needs and the database lacks;
+`checks.config` names any secret that is unset; `checks.encryption` fails when
+`TOKEN_ENCRYPTION_KEY` does not decode to exactly 32 bytes.
+
+Check what actually shipped, too — a deploy from a stale checkout is silent:
+
+```bash
+npx wrangler deployments list
+```
+
+The asset count in the deploy output is the quickest tell. This branch has fifteen files
+under `public/`; if wrangler reports reading one, it is deploying an old commit.

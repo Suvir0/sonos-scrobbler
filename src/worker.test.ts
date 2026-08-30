@@ -231,7 +231,8 @@ describe('routing', () => {
         encryption: 'ok',
         scrobbleKeySalt: 'ok',
         sessionSecret: 'ok',
-        database: 'ok'
+        database: 'ok',
+        schema: 'ok'
       }
     });
   });
@@ -401,6 +402,21 @@ describe('hardening', () => {
       body: 'not json'
     });
     expect(response.status).toBe(400);
+  });
+
+  // A Worker deploy and a D1 migration are separate steps, so code reaches production
+  // ahead of its schema sooner or later. Without this the symptom is a 500 from
+  // /api/account and a blank dashboard for every user, with nothing saying why.
+  it('reports degraded when the database is missing a column this build needs', async () => {
+    await env.DB.prepare('ALTER TABLE sonos_accounts DROP COLUMN needs_reauth').run();
+
+    const response = await SELF.fetch('https://example.com/healthz');
+    expect(response.status).toBe(503);
+
+    const body = (await response.json()) as { status: string; checks: { schema: string } };
+    expect(body.status).toBe('degraded');
+    expect(body.checks.schema).toContain('sonos_accounts.needs_reauth');
+    expect(body.checks.schema).toContain('db:remote');
   });
 
   // Served from the Worker rather than from public/, because Wrangler's asset upload

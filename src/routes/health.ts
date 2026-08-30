@@ -29,6 +29,36 @@ const REQUIRED = [
 /** Where a vulnerability report should go. Matches SECURITY.md and the colophon. */
 export const SECURITY_CONTACT = 'hello@suvir.net';
 
+/**
+ * Columns this build's queries depend on, by the migration that adds them.
+ *
+ * A Worker deploy and a D1 migration are separate steps, so code can always reach
+ * production ahead of the schema it needs. When that happens the failure is a 500 from
+ * `/api/account` and a dashboard that shows nothing — for every user, with no clue as
+ * to why. Checking here turns it into `degraded` and a named column, which is the
+ * difference between a minute and an evening.
+ */
+const REQUIRED_COLUMNS: Record<string, readonly string[]> = {
+  users: ['scrobble_radio', 'allow_handoff', 'last_scrobble_at'],
+  households: ['last_sync_at'],
+  subscriptions: ['last_seq_id', 'last_event_at'],
+  sonos_accounts: ['needs_reauth']
+};
+
+async function checkSchema(env: Env): Promise<string> {
+  const missing: string[] = [];
+  for (const [table, columns] of Object.entries(REQUIRED_COLUMNS)) {
+    const info = await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+    const present = new Set((info.results ?? []).map((row) => row.name));
+    if (present.size === 0) {
+      missing.push(`${table} (table absent)`);
+      continue;
+    }
+    for (const column of columns) if (!present.has(column)) missing.push(`${table}.${column}`);
+  }
+  return missing.length ? `missing: ${missing.join(', ')} — run npm run db:remote` : 'ok';
+}
+
 export async function health(env: Env): Promise<Response> {
   const checks: Record<string, string> = {};
 
@@ -64,6 +94,13 @@ export async function health(env: Env): Promise<Response> {
     checks.database = 'ok';
   } catch {
     checks.database = 'unreachable';
+  }
+
+  // Only worth asking once the database answers at all.
+  try {
+    checks.schema = checks.database === 'ok' ? await checkSchema(env) : 'not checked';
+  } catch (error) {
+    checks.schema = error instanceof Error ? error.message : 'failed';
   }
 
   const healthy = Object.values(checks).every((value) => value === 'ok');
