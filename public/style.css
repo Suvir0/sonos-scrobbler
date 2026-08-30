@@ -466,6 +466,52 @@ h2.section {
   color: var(--accent-text);
 }
 
+/* A status that is a sentence rather than a badge.
+
+   The band does not wrap above 46rem, so a long status competes with the label, the
+   explanation and the button for one line. Flex resolves that by shrinking everything
+   with room to give — and `.name` has `min-width: 0`, so the label collapses to nothing
+   and its text spills across the explanation beside it. "Connected as somebody" always
+   fitted; a service's own refusal, which `targets.last_error` stores up to 400
+   characters of, never could.
+
+   So a long one drops to its own line instead of being squeezed into the end of a row. */
+.row.stacked .state {
+  flex: 1 1 100%;
+  order: 4;
+}
+
+@media (min-width: 46rem) {
+  .row.stacked {
+    flex-wrap: wrap;
+  }
+
+  .row.stacked .state {
+    text-align: left;
+  }
+}
+
+/* Something worth saying about a connection that is working.
+
+   Distinct from `.state` deliberately. A duplicate scrobble is not a fault in the
+   connection — the account is linked and delivering — so the row keeps saying so, and
+   this carries the caveat underneath rather than replacing the status with a warning and
+   putting a Connect button back in front of somebody whose connection is fine. */
+.row .alert {
+  flex: 1 1 100%;
+  order: 5;
+  min-width: 0;
+  font: 400 12px/1.5 var(--sans);
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 46rem) {
+  .row.has-alert {
+    flex-wrap: wrap;
+  }
+}
+
 /* -------------------------------------------------------------------- controls */
 
 .btn {

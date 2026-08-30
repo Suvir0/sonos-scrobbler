@@ -95,6 +95,7 @@
           <span class="why">You can skip this if you only use ListenBrainz.</span>
           <a class="btn" href="/auth/lastfm/start">Connect</a>
           <span class="state" hidden></span>
+          <span class="alert" hidden></span>
         </div>
 
         <form class="row fixed" id="step-listenbrainz" method="POST" action="/auth/listenbrainz">
@@ -119,6 +120,7 @@
           />
           <button class="btn" type="submit">Save</button>
           <span class="state" hidden></span>
+          <span class="alert" hidden></span>
         </form>
       </div>
 
@@ -302,6 +304,8 @@
         state.className = 'state';
         state.textContent = `✓ ${text}`;
         state.hidden = false;
+        row.classList.remove('stacked');
+        clearAlert(row);
         // The explanation and the button have both done their job once the account is
         // linked; what is left is the row saying so.
         for (const gone of row.querySelectorAll('.why, .btn, input')) gone.hidden = true;
@@ -325,7 +329,39 @@
         state.className = 'state needs';
         state.textContent = text;
         state.hidden = false;
+        // A sentence needs a line; a badge does not. These messages come from another
+        // service and are not length-limited by anything we control, and the band does
+        // not wrap at desktop widths — so a long one squeezed into the end of the row
+        // collapses the label beside it. Forty characters is comfortably past every
+        // status this page writes itself and short of every explanation a service sends.
+        row.classList.toggle('stacked', text.length > 40);
+        clearAlert(row);
         for (const back of row.querySelectorAll('.why, .btn, input')) back.hidden = false;
+      }
+
+      /**
+       * A caveat on a connection that is otherwise working.
+       *
+       * Kept out of `.state` on purpose. Replacing "Connected as you" with a warning, and
+       * bringing the Connect button back with it, tells somebody their account is broken
+       * and invites them to reconnect — when the account is fine and reconnecting fixes
+       * nothing. The status stays true and this sits underneath it.
+       */
+      function alertOn(id, text) {
+        const row = $(id);
+        const alert = row.querySelector('.alert');
+        if (!alert) return;
+        alert.textContent = text;
+        alert.hidden = false;
+        row.classList.add('has-alert');
+      }
+
+      function clearAlert(row) {
+        const alert = row.querySelector('.alert');
+        if (!alert) return;
+        alert.hidden = true;
+        alert.textContent = '';
+        row.classList.remove('has-alert');
       }
 
       /* ----------------------------------------------------------------- settings */
@@ -619,17 +655,16 @@
             // another service.
             needsAttention(id, target.lastError || 'Reconnect needed: the credentials were rejected');
           } else if (target.duplicatesSeenAt) {
-            // Nothing here is broken, so this is not an error — but it is the one
-            // condition that looks exactly like one from the outside. Every song appears
-            // twice, this service submitted each of them once, and no amount of staring
-            // at it reveals the difference. Saying so plainly is the whole fix available:
-            // the second writer is not ours to stop, and Last.fm cannot remove what it
-            // has already accepted.
-            needsAttention(
+            // The connection is working, so the row still says so; the caveat goes on its
+            // own line underneath. Every song appears twice, this service submitted each
+            // of them once, and nothing visible from outside tells those apart — which is
+            // the whole reason for saying it here. Not a remedy: the second writer is not
+            // ours to stop, and Last.fm cannot remove what it has already accepted.
+            connected(id, `Connected as ${target.username ?? 'you'}`);
+            alertOn(
               id,
-              `Connected as ${target.username ?? 'you'} — but something else is scrobbling ` +
-                'this account too, so plays are being recorded twice. Check ' +
-                'last.fm/settings/applications.'
+              'Something else is scrobbling this account too, so plays are being ' +
+                'recorded twice. Check last.fm/settings/applications.'
             );
           } else {
             connected(id, `Connected as ${target.username ?? 'you'}`);

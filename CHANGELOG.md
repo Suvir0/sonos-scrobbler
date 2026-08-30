@@ -26,6 +26,20 @@ arrives minutes late, so looking before submitting can never see it, and remembe
 what we sent would mean holding an artist and a title at rest — the one thing
 `UserQueue` promises it never does.
 
+**A long status no longer collapses the row it sits in.** `.row` does not wrap above
+46rem, so a status that is a sentence rather than a badge competed with the label, the
+explanation and the button for one line — and since `.name` carries `min-width: 0`, flex
+resolved it by shrinking the label to nothing while its text kept its own width and
+spilled across the explanation beside it. Measured at 13px of box holding 57px of text.
+"Connected as somebody" always fitted; the ListenBrainz refusal that `targets.last_error`
+stores 296 characters of never could, so this was already broken before anything new was
+shown there. A long status now drops to its own line.
+
+The duplicate warning also stops pretending the connection is broken. It went through
+`needsAttention`, which puts the Connect button and "you can skip this" back on the row —
+telling somebody whose account is linked and delivering to reconnect it, which fixes
+nothing. The row keeps saying "Connected as you" and the caveat sits underneath it.
+
 **The now-playing panel names the music service.** `classify` already resolved it and
 `/api/account` threw it away. Which app a play came from is the question every
 duplicate and every missing scrobble turns on, and nothing on the page answered it.
