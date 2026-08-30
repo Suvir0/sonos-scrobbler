@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+**The page now says when something else is scrobbling your account.** Two writers on
+one Last.fm account both submit the same plays, and because each stamps a scrobble
+with "now, minus how far into the track it was", their answers differ by a second or
+two — far enough apart that Last.fm keeps both. Confirmed here by disabling this
+service's Last.fm target for six minutes and watching a scrobble land inside the
+window anyway, about five minutes after the track started.
+
+From the outside that is indistinguishable from this service doubling everything, and
+the search for the difference cost a whole evening and two shipped fixes to real
+concurrency bugs that were never the cause. So the service now performs that
+comparison itself: once an hour at most, after a delivery lands, it reads the
+account's own recent history and looks for one title scrobbled twice within ten
+seconds. `targets.foreign_scrobble_at` records the answer and the status page reports
+it in plain words.
+
+It is a diagnosis, not a remedy — the second writer is not ours to stop, and Last.fm
+has no way to remove what it has already accepted. Ten seconds is the window because a
+scrobble needs half its track and nothing under thirty seconds is eligible, so two
+honest scrobbles of one title are at least fifteen apart. Checking history rather than
+watching for a copy of the play just sent is deliberate twice over: the other writer
+arrives minutes late, so looking before submitting can never see it, and remembering
+what we sent would mean holding an artist and a title at rest — the one thing
+`UserQueue` promises it never does.
+
+**The now-playing panel names the music service.** `classify` already resolved it and
+`/api/account` threw it away. Which app a play came from is the question every
+duplicate and every missing scrobble turns on, and nothing on the page answered it.
+
+**A fifteen-second timeout was holding every Durable Object open for fifteen seconds.**
+`AbortSignal.timeout()` creates pending work, so the runtime kept the invocation alive
+until the timer fired even when the request had finished. Production showed it plainly:
+every Last.fm-facing call measured 14.8–15.4s of wall time against under 7ms of CPU,
+sitting exactly on the client's ceiling, while succeeding. Since `UserQueue` serializes
+its work, that phantom occupancy was inherited by whatever queued behind it. Both
+clients now use `withTimeout`, which clears the timer the moment the work settles.
+
+Note for operators: this adds `targets.foreign_scrobble_at`. Apply
+`0008_foreign_scrobbler.sql` before deploying, or `/healthz` will report `degraded`
+with the column named.
+
 **Every song was scrobbled twice, and only Last.fm showed it.** A track change is a
 `playbackMetadata` and a `playback` event emitted milliseconds apart — the live
 subscription rows show the pair landing about 200ms apart — and both were being

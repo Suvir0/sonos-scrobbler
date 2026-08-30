@@ -52,7 +52,7 @@ const REQUIRED_COLUMNS: Record<string, readonly string[]> = {
   sonos_accounts: ['needs_reauth'],
   sonos_groups: ['player_ids'],
   sonos_players: ['scrobble'],
-  targets: ['last_error']
+  targets: ['last_error', 'foreign_scrobble_at']
 };
 
 async function checkSchema(env: Env): Promise<string> {

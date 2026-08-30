@@ -22,6 +22,7 @@ import { decryptSecret } from '../lib/crypto.js';
 import { log } from '../lib/log.js';
 import { LastfmClient } from '../scrobble/lastfm-client.js';
 import { ListenBrainzClient } from '../scrobble/listenbrainz-client.js';
+import { findDuplicatePair } from '../scrobble/foreign.js';
 import { ScrobbleQueue, scrobbleKey, type QueueStorage } from '../scrobble/queue.js';
 import type { NowPlayingTrack, ScrobbleTarget, ScrobbleTrack } from '../scrobble/target.js';
 
@@ -30,9 +31,28 @@ type TargetKind = 'lastfm' | 'listenbrainz';
 interface TargetRow {
   kind: TargetKind;
   credential_enc: string;
+  username: string | null;
   enabled: number;
   needs_reauth: number;
 }
+
+/**
+ * At most one duplicate-detection read per hour.
+ *
+ * A second scrobbler is a standing condition, not news — once it is true it stays true
+ * until somebody disconnects something — so this is a diagnosis worth one extra API call
+ * an hour and no more.
+ *
+ * The check reads history rather than watching for a copy of the play just sent, which
+ * also means it needs no delay: the duplicate of a track from ten minutes ago is already
+ * sitting in the same response. That matters, because the other writer is slow. Measured
+ * in production, its copy arrived about five minutes after the track started — long
+ * after our own submission, which is why checking *before* submitting can never see it.
+ */
+const FOREIGN_CHECK_INTERVAL_MS = 60 * 60_000;
+
+/** Enough history to cover several tracks without asking Last.fm for a large page. */
+const FOREIGN_CHECK_DEPTH = 50;
 
 /** Retry cadence when a flush asks to be retried. The queue owns the backoff maths. */
 const FLUSH_RETRY_FLOOR_MS = 15_000;
@@ -100,7 +120,7 @@ export class UserQueue extends DurableObject<Env> {
 
   private async loadTargets(userId: string): Promise<Map<TargetKind, ScrobbleTarget>> {
     const rows = await this.env.DB.prepare(
-      'SELECT kind, credential_enc, enabled, needs_reauth FROM targets WHERE user_id = ?'
+      'SELECT kind, credential_enc, username, enabled, needs_reauth FROM targets WHERE user_id = ?'
     )
       .bind(userId)
       .all<TargetRow>();
@@ -122,7 +142,9 @@ export class UserQueue extends DurableObject<Env> {
           new LastfmClient({
             apiKey: this.env.LASTFM_API_KEY,
             apiSecret: this.env.LASTFM_API_SECRET,
-            sessionKey: credential
+            sessionKey: credential,
+            // Only used to read the account back when checking for a second scrobbler.
+            ...(row.username ? { username: row.username } : {})
           })
         );
       } else if (row.kind === 'listenbrainz') {
@@ -216,6 +238,10 @@ export class UserQueue extends DurableObject<Env> {
         // rejected credential until the user happened to re-paste a token that was never
         // the problem.
         await this.clearError(userId, kind);
+        // A delivery landed, so the account is live and worth inspecting. Never allowed
+        // to affect the flush: this is a diagnostic, and a scrobble must not fail because
+        // one failed.
+        await this.checkForDuplicates(userId, kind, target).catch(() => undefined);
         // More waiting behind this batch; come straight back for it.
         if (queue.size > 0) retryAtMs = Date.now();
       }
@@ -224,6 +250,61 @@ export class UserQueue extends DurableObject<Env> {
     if (retryAtMs !== undefined) {
       await this.ctx.storage.setAlarm(Math.max(retryAtMs, Date.now() + FLUSH_RETRY_FLOOR_MS));
     }
+  }
+
+  /**
+   * Looks for duplicate scrobbles on the account, and records it if there are any.
+   *
+   * Only Last.fm: it is the only target here that keeps two copies of one play. Both
+   * ListenBrainz and Last.fm collapse submissions sharing an exact timestamp, but two
+   * *observers* of the same music disagree by a second or two, and ListenBrainz dedupes
+   * that where Last.fm does not — which is why this reads as a Last.fm fault and is not
+   * one.
+   *
+   * Diagnosis only. Nothing here stops the other writer, and Last.fm offers no way to
+   * remove what it has already accepted. What it does is turn "your scrobbler is
+   * doubling everything" into a specific, checkable statement on the status page.
+   */
+  private async checkForDuplicates(
+    userId: string,
+    kind: TargetKind,
+    target: ScrobbleTarget
+  ): Promise<void> {
+    if (kind !== 'lastfm' || !(target instanceof LastfmClient)) return;
+
+    const now = Date.now();
+    const lastChecked = (await this.ctx.storage.get<number>('duplicateCheckedAt')) ?? 0;
+    if (now - lastChecked < FOREIGN_CHECK_INTERVAL_MS) return;
+    // Stamped before the read, not after, so a slow or failing check cannot turn into a
+    // request on every single flush.
+    await this.ctx.storage.put('duplicateCheckedAt', now);
+
+    const recent = await target.recentScrobbles(FOREIGN_CHECK_DEPTH);
+    const pair = findDuplicatePair(recent);
+    if (!pair) {
+      // Cleared as deliberately as it is set: whatever was doing this may have been
+      // disconnected, and a warning that never goes away is a warning nobody reads.
+      await this.env.DB.prepare(
+        `UPDATE targets SET foreign_scrobble_at = NULL, updated_at = ?
+          WHERE user_id = ? AND kind = ? AND foreign_scrobble_at IS NOT NULL`
+      )
+        .bind(now, userId, kind)
+        .run();
+      return;
+    }
+
+    // The offset, not the track. How far apart the two copies sat is the diagnostic —
+    // it is what distinguishes two observers from one double submission — and it names
+    // nothing anybody listened to.
+    log(this.env, 'warn', 'scrobble.duplicate-detected', {
+      kind,
+      offsetSeconds: pair.offsetSeconds
+    });
+    await this.env.DB.prepare(
+      'UPDATE targets SET foreign_scrobble_at = ?, updated_at = ? WHERE user_id = ? AND kind = ?'
+    )
+      .bind(now, now, userId, kind)
+      .run();
   }
 
   /** Records why a target is not accepting plays, without declaring its credential dead. */

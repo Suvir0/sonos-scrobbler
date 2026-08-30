@@ -523,7 +523,12 @@
 
         if (playing.length) {
           const [first, ...rest] = playing;
-          $('np-room').textContent = `Now playing · ${first.room}`;
+          // The service is named alongside the room because "which app is this coming
+          // from" is the question a duplicate or a missing scrobble always turns on, and
+          // nothing else on the page answers it.
+          $('np-room').textContent = first.service
+            ? `Now playing · ${first.room} · ${first.service}`
+            : `Now playing · ${first.room}`;
           $('np-track').textContent = first.track;
           // Artist and album on one line, as the design has it; the album is dropped
           // rather than shown as a dangling dash when the source did not report one.
@@ -613,6 +618,19 @@
             // cannot possibly work. Set as text, never as HTML — this string comes from
             // another service.
             needsAttention(id, target.lastError || 'Reconnect needed: the credentials were rejected');
+          } else if (target.duplicatesSeenAt) {
+            // Nothing here is broken, so this is not an error — but it is the one
+            // condition that looks exactly like one from the outside. Every song appears
+            // twice, this service submitted each of them once, and no amount of staring
+            // at it reveals the difference. Saying so plainly is the whole fix available:
+            // the second writer is not ours to stop, and Last.fm cannot remove what it
+            // has already accepted.
+            needsAttention(
+              id,
+              `Connected as ${target.username ?? 'you'} — but something else is scrobbling ` +
+                'this account too, so plays are being recorded twice. Check ' +
+                'last.fm/settings/applications.'
+            );
           } else {
             connected(id, `Connected as ${target.username ?? 'you'}`);
           }

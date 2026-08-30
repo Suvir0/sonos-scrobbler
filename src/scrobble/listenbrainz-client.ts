@@ -16,6 +16,7 @@
  */
 
 import { APP_NAME, USER_AGENT } from '../lib/identity.js';
+import { withTimeout } from '../lib/timeout.js';
 import {
   SubmissionError,
   type NowPlayingTrack,
@@ -177,19 +178,27 @@ export class ListenBrainzClient implements ScrobbleTarget {
     path: string,
     options: { method: 'GET' | 'POST'; token: string; body?: unknown }
   ): Promise<Response> {
+    // Bounded by an explicit controller rather than `AbortSignal.timeout`, whose pending
+    // timer keeps the calling Durable Object alive for the full timeout even when the
+    // request finished immediately. See `withTimeout`.
+    //
+    // The timer is cleared once the response head arrives; callers read the body after
+    // this returns, which is a small immediate read against a connection already open.
     let response: Response;
     try {
-      response = await this.dependencies.fetch(`${this.origin}${path}`, {
-        method: options.method,
-        headers: {
-          Authorization: `Token ${options.token}`,
-          Accept: 'application/json',
-          'User-Agent': USER_AGENT,
-          ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' })
-        },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-        signal: AbortSignal.timeout(this.dependencies.timeoutMs)
-      });
+      response = await withTimeout(this.dependencies.timeoutMs, (signal) =>
+        this.dependencies.fetch(`${this.origin}${path}`, {
+          method: options.method,
+          headers: {
+            Authorization: `Token ${options.token}`,
+            Accept: 'application/json',
+            'User-Agent': USER_AGENT,
+            ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' })
+          },
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+          signal
+        })
+      );
     } catch (error) {
       // A SubmissionError from requireHttps is a configuration fault, not a network
       // one, and must keep its own classification.

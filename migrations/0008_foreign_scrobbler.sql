@@ -1,0 +1,24 @@
+-- When something else is scrobbling the same account.
+--
+-- This service is not the only thing that can write to a person's Last.fm. A music
+-- player with its own scrobbler, a phone app, a server-side integration on the account
+-- itself — any of them can watch the same speaker, or the same stream, and submit the
+-- same play. Two observers each stamping a scrobble with "now minus the position they
+-- saw" land a few seconds apart, which is far enough that Last.fm keeps both.
+--
+-- The result is a listening history with every song in it twice, and nothing anywhere
+-- that says why. It reads exactly like a bug in this service, because from the outside
+-- it is indistinguishable from one: the only way to tell the two apart is to compare
+-- what this service submitted against what the account actually received. That
+-- comparison took hours by hand, and ended in two shipped fixes to genuine concurrency
+-- bugs that were never the cause.
+--
+-- So the service now does that comparison itself, once an hour at most, and records the
+-- answer here. This column holds the moment a copy of one of our own submissions was
+-- last seen on the account under a timestamp we did not write. It is a diagnosis, not a
+-- remedy: nothing here stops the other writer, and Last.fm has no API to remove what it
+-- already accepted. What it does is replace "your scrobbler is broken" with "something
+-- else is scrobbling this account too", which is the sentence that ends the search.
+--
+-- Content-safe: a timestamp, not a track. Nothing here records what was played.
+ALTER TABLE targets ADD COLUMN foreign_scrobble_at INTEGER;

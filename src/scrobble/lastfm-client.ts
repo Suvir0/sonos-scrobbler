@@ -15,6 +15,8 @@
 
 import { USER_AGENT } from '../lib/identity.js';
 import { md5 } from '../lib/md5.js';
+import { withTimeout } from '../lib/timeout.js';
+import type { RecentScrobble } from './foreign.js';
 import {
   SubmissionError,
   type NowPlayingTrack,
@@ -35,6 +37,12 @@ export interface LastfmCredentials {
   apiSecret: string;
   /** Absent until the user has completed the desktop auth flow. */
   sessionKey?: string;
+  /**
+   * The account's Last.fm name. Only needed to read the account back — `user.getRecentTracks`
+   * is addressed by name rather than by session — so it is optional and its absence
+   * disables that read rather than failing anything.
+   */
+  username?: string;
 }
 
 /** @see SubmissionFailureKind — kept as an alias so existing call sites still read well. */
@@ -179,6 +187,43 @@ export class LastfmClient implements ScrobbleTarget {
     });
   }
 
+  /**
+   * The account's most recent scrobbles, newest first.
+   *
+   * Read-only and unsigned: `user.getRecentTracks` is a public method addressed by
+   * account name, so it needs neither the session key nor a signature. A GET rather than
+   * the signed POST every other call here uses, for the same reason.
+   *
+   * Returns an empty list rather than throwing on any failure. The only caller is a
+   * diagnostic — nothing about scrobbling may break because a read for it did.
+   */
+  async recentScrobbles(limit = 20): Promise<RecentScrobble[]> {
+    const user = this.credentials.username;
+    if (!user) return [];
+
+    const url = new URL(LASTFM_ENDPOINT);
+    url.searchParams.set('method', 'user.getrecenttracks');
+    url.searchParams.set('user', user);
+    url.searchParams.set('api_key', this.credentials.apiKey);
+    url.searchParams.set('limit', String(limit));
+    url.searchParams.set('format', 'json');
+
+    try {
+      const body = await withTimeout(this.dependencies.timeoutMs, async (signal) => {
+        const response = await this.dependencies.fetch(url.toString(), {
+          method: 'GET',
+          headers: { 'User-Agent': USER_AGENT },
+          signal
+        });
+        if (!response.ok) return undefined;
+        return (await response.json()) as unknown;
+      });
+      return readRecentTracks(body);
+    } catch {
+      return [];
+    }
+  }
+
   /** Submits up to 50 completed plays. */
   async scrobble(tracks: readonly ScrobbleTrack[]): Promise<ScrobbleResult> {
     if (!tracks.length) return { accepted: 0, ignored: 0, ignoredReasons: [] };
@@ -215,24 +260,31 @@ export class LastfmClient implements ScrobbleTarget {
       format: 'json'
     });
 
+    // The body is read inside the timeout so the whole exchange is bounded, and so the
+    // timer is cleared the moment it settles rather than being left pending — see
+    // `withTimeout`, which exists because the obvious `AbortSignal.timeout` held this
+    // object open for the full fifteen seconds on every successful call.
     let response: Response;
+    let text: string;
     try {
-      response = await this.dependencies.fetch(LASTFM_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': USER_AGENT
-        },
-        body: form.toString(),
-        signal: AbortSignal.timeout(this.dependencies.timeoutMs)
-      });
+      ({ response, text } = await withTimeout(this.dependencies.timeoutMs, async (signal) => {
+        const sent = await this.dependencies.fetch(LASTFM_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': USER_AGENT
+          },
+          body: form.toString(),
+          signal
+        });
+        return { response: sent, text: await sent.text() };
+      }));
     } catch (error) {
       // Offline, DNS failure or timeout: always worth retrying later.
       const detail = error instanceof Error ? error.message : 'request failed';
       throw new LastfmError(`Could not reach Last.fm (${detail})`, undefined, 'retry');
     }
 
-    const text = await response.text();
     let body: unknown;
     try {
       body = text ? JSON.parse(text) : {};
@@ -300,6 +352,40 @@ export function readScrobbleResult(body: unknown): ScrobbleResult {
     ignored: Number.isFinite(ignored) ? ignored : 0,
     ignoredReasons
   };
+}
+
+/**
+ * Reads the scrobbles out of a `user.getRecentTracks` body.
+ *
+ * Total, like every other parser here: the now-playing entry carries no `date` and is
+ * skipped rather than treated as a scrobble at the epoch, and anything malformed is
+ * dropped instead of throwing into a diagnostic path.
+ */
+export function readRecentTracks(body: unknown): RecentScrobble[] {
+  const tracks = (body as { recenttracks?: { track?: unknown } })?.recenttracks?.track;
+  const entries = Array.isArray(tracks) ? tracks : tracks ? [tracks] : [];
+
+  const out: RecentScrobble[] = [];
+  for (const entry of entries) {
+    const row = entry as {
+      name?: unknown;
+      artist?: { '#text'?: unknown; name?: unknown };
+      date?: { uts?: unknown };
+      '@attr'?: { nowplaying?: unknown };
+    };
+    if (row['@attr']?.nowplaying) continue;
+    const track = typeof row.name === 'string' ? row.name : undefined;
+    const artist =
+      typeof row.artist?.['#text'] === 'string'
+        ? row.artist['#text']
+        : typeof row.artist?.name === 'string'
+          ? row.artist.name
+          : undefined;
+    const uts = Number(row.date?.uts);
+    if (!track || !artist || !Number.isFinite(uts)) continue;
+    out.push({ artist, track, timestamp: uts });
+  }
+  return out;
 }
 
 /** The URL the user visits to approve the app. */

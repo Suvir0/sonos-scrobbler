@@ -20,7 +20,7 @@ import { currentRecoveryKey, issueRecoveryKey, recoveryUrl } from '../lib/recove
 export async function accountStatus(env: Env, userId: string): Promise<Response> {
   const [targets, households, groups] = await Promise.all([
     env.DB.prepare(
-      'SELECT kind, username, enabled, needs_reauth, last_error FROM targets WHERE user_id = ?'
+      'SELECT kind, username, enabled, needs_reauth, last_error, foreign_scrobble_at FROM targets WHERE user_id = ?'
     )
       .bind(userId)
       .all<{
@@ -29,6 +29,7 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
         enabled: number;
         needs_reauth: number;
         last_error: string | null;
+        foreign_scrobble_at: number | null;
       }>(),
     env.DB.prepare('SELECT household_id, name FROM households WHERE user_id = ?')
       .bind(userId)
@@ -105,14 +106,27 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       return { group, snapshot: await stub.snapshot().catch(() => undefined) };
     })
   );
-  const nowPlaying: { room: string; artist: string; track: string; album?: string }[] = [];
+  // `service` is the music service Sonos names on the container or the track — Spotify,
+  // Apple Music, a radio provider. Not content data: it says where a play came from, not
+  // what it was, and it is the one field that distinguishes "your speaker is playing" from
+  // "your speaker is playing something an app elsewhere is also tracking". Carried
+  // through because the classifier already resolves it and dropping it here made a
+  // duplicate-scrobble investigation far harder than it needed to be.
+  const nowPlaying: {
+    room: string;
+    artist: string;
+    track: string;
+    album?: string;
+    service?: string;
+  }[] = [];
   for (const { group, snapshot } of snapshots) {
     if (snapshot?.track && snapshot.playing) {
       nowPlaying.push({
         room: group.name ?? group.group_id,
         artist: snapshot.track.artist,
         track: snapshot.track.track,
-        ...(snapshot.track.album ? { album: snapshot.track.album } : {})
+        ...(snapshot.track.album ? { album: snapshot.track.album } : {}),
+        ...(snapshot.track.serviceName ? { service: snapshot.track.serviceName } : {})
       });
     }
   }
@@ -127,7 +141,11 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       // because a generic "credentials were rejected" is wrong whenever the credential
       // was not the problem — and it is the cases where it is wrong that leave somebody
       // re-pasting a working token forever.
-      lastError: row.last_error
+      lastError: row.last_error,
+      // When duplicate scrobbles were last seen on this account. Not a fault in the
+      // pipeline — it means something else is writing here too, which is otherwise
+      // indistinguishable from this service misbehaving.
+      duplicatesSeenAt: row.foreign_scrobble_at
     })),
     households: (households.results ?? []).map((row) => ({
       id: row.household_id,

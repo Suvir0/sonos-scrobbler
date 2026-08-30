@@ -15,7 +15,8 @@ const MIGRATIONS: (() => Promise<{ default: string }>)[] = [
   () => import('../../migrations/0004_sonos_reauth.sql?raw'),
   () => import('../../migrations/0005_room_choice.sql?raw'),
   () => import('../../migrations/0006_identity.sql?raw'),
-  () => import('../../migrations/0007_target_error.sql?raw')
+  () => import('../../migrations/0007_target_error.sql?raw'),
+  () => import('../../migrations/0008_foreign_scrobbler.sql?raw')
 ];
 
 const TABLES = [
