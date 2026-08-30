@@ -17,7 +17,9 @@
       content="Sends whatever your Sonos plays to your own Last.fm and ListenBrainz accounts. You install nothing and you run nothing at home."
     />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- A raster, deliberately: iOS ignores an SVG here, so the previous link left an
+         add-to-home-screen shortcut showing a screenshot of the page instead of a mark. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <!-- The two faces above the fold. Preloaded so the headline does not land in a
          fallback and then reflow into Archivo a moment later. -->
@@ -112,6 +114,7 @@
             autocapitalize="none"
             autocorrect="off"
             spellcheck="false"
+            required
             placeholder="Paste your token"
           />
           <button class="btn" type="submit">Save</button>
@@ -162,6 +165,28 @@
       <div class="rows" id="rooms" hidden></div>
       <p class="note" id="rooms-note" role="status" hidden></p>
 
+      <h2 class="section" id="keeplink-heading" hidden>Your way back in</h2>
+      <div class="rows" id="keeplink" hidden>
+        <div class="row fixed">
+          <span class="name">Sign-in link</span>
+          <span class="why">
+            There is no password here. Signing in with Sonos is the account. If you clear
+            your cookies, switch browser, or leave it a month, this link is how you get
+            back to these settings. Save it in your notes, your bookmarks or your password
+            manager. Anyone who has it can sign in as you.
+          </span>
+          <label class="visually-hidden" for="keeplink-url">Your private sign-in link</label>
+          <input type="text" id="keeplink-url" readonly value="Loading…" />
+          <button class="btn" id="keeplink-copy" type="button">Copy</button>
+        </div>
+        <p class="note" id="keeplink-note" role="status" hidden></p>
+        <p class="note">
+          Lost it, or shared it by mistake?
+          <button class="linkbtn" id="keeplink-new" type="button">Make a new link</button>
+          The old one stops working straight away.
+        </p>
+      </div>
+
       <footer>
         <p>
           <strong>We keep no listening history.</strong> A track exists here only while it plays.
@@ -179,7 +204,11 @@
             A rescan re-discovers your rooms and re-subscribes them. It is the fix for a new
             speaker that is not scrobbling.
           </p>
-          <pre id="rescan-out" class="output" hidden></pre>
+          <p class="note" id="rescan-said" role="status" hidden></p>
+          <details id="rescan-detail" hidden>
+            <summary>What the rescan found</summary>
+            <pre id="rescan-out" class="output"></pre>
+          </details>
         </details>
 
         <p class="fine">
@@ -210,7 +239,25 @@
         signin_required: ['err', 'Connect Sonos first.'],
         lastfm_denied: ['err', 'Last.fm sign-in was cancelled.'],
         lastfm_failed: ['err', 'Last.fm would not accept that sign-in. Please try again.'],
-        listenbrainz_failed: ['err', 'ListenBrainz rejected that token. Check you copied all of it.']
+        listenbrainz_missing: ['err', 'Paste your ListenBrainz token into the box before saving.'],
+        listenbrainz_failed: ['err', 'ListenBrainz rejected that token. Check you copied all of it.'],
+        recover_failed: [
+          'err',
+          'That sign-in link is not valid any more. Connect Sonos again to start a new account.'
+        ],
+        recover_signed_in: [
+          'err',
+          'That sign-in link is for a different account. Sign out first, then open it again.'
+        ]
+      };
+
+      // The query value is a machine name. This is the one message whose whole job is
+      // to tell somebody their account linked, so it says the service's name the way
+      // the rest of the site says it rather than echoing `lastfm` back at them.
+      const SERVICE_NAMES = {
+        sonos: 'Sonos',
+        lastfm: 'Last.fm',
+        listenbrainz: 'ListenBrainz'
       };
 
       const error = params.get('error');
@@ -219,12 +266,20 @@
         banner.className = `banner ${MESSAGES[error][0]}`;
         banner.textContent = MESSAGES[error][1];
         banner.hidden = false;
-      } else if (linked) {
+      } else if (linked && SERVICE_NAMES[linked]) {
         banner.className = 'banner ok';
-        banner.textContent = `${linked} connected.`;
+        banner.textContent = `${SERVICE_NAMES[linked]} connected.`;
+        banner.hidden = false;
+      } else if (params.get('recovered')) {
+        banner.className = 'banner ok';
+        banner.textContent = 'Signed back in. Everything is where you left it.';
         banner.hidden = false;
       }
-      if (error || linked) history.replaceState(null, '', location.pathname);
+      // Clears the query, which for a recovery also takes the key out of the address bar
+      // before anybody reads it over a shoulder or copies the URL out of it.
+      if (error || linked || params.has('recovered')) {
+        history.replaceState(null, '', location.pathname);
+      }
 
       /* ------------------------------------------------------------------ helpers */
 
@@ -253,12 +308,24 @@
         row.classList.remove('primary');
       }
 
+      /**
+       * The opposite of `connected`, and it has to undo everything that did.
+       *
+       * A credential can be rejected while the page is open — the queue flags it the
+       * moment a scrobble comes back unauthorized — so this row may already have been
+       * through `connected()` on an earlier poll, with its button and its explanation
+       * hidden. Saying "reconnect needed" above no button is an instruction a person
+       * cannot follow.
+       */
       function needsAttention(id, text) {
         const row = $(id);
+        const name = row.querySelector('.name');
+        if (name.dataset.connected) name.textContent = name.dataset.connected;
         const state = row.querySelector('.state');
         state.className = 'state needs';
         state.textContent = text;
         state.hidden = false;
+        for (const back of row.querySelectorAll('.why, .btn, input')) back.hidden = false;
       }
 
       /* ----------------------------------------------------------------- settings */
@@ -320,14 +387,27 @@
 
       const roomsBox = $('rooms');
       const roomsNote = $('rooms-note');
+      /** Which rooms are currently drawn, so a poll only redraws when the set changes. */
+      let drawnRooms = null;
 
       /**
-       * Draws the room switches.
+       * Draws the room switches, but only when the set of rooms has actually changed.
        *
-       * Rendered from the first status read and after a rescan, never on the fifteen
-       * second poll: replacing these nodes under someone's finger would undo a tap.
+       * The guard is the whole point. Redrawing on every fifteen-second poll would
+       * replace these nodes under somebody's finger and undo a tap, so this used to run
+       * once and never again — which meant a brand new account, whose rooms are still
+       * being discovered in the background when the first poll lands, hid this panel
+       * permanently and offered no hint that a reload would fix it.
+       *
+       * Keyed on the room ids and names, deliberately not on their on/off state: that is
+       * the value a tap is in the middle of changing, and including it would reintroduce
+       * exactly the race the guard exists to prevent.
        */
       function renderRooms(rooms) {
+        const signature = rooms.map((room) => `${room.id}\u0000${room.name ?? ''}`).join('\u0001');
+        if (signature === drawnRooms) return;
+        drawnRooms = signature;
+
         roomsBox.replaceChildren();
         if (!rooms.length) {
           $('rooms-heading').hidden = true;
@@ -376,6 +456,61 @@
         roomsBox.hidden = false;
       }
 
+      /* ---------------------------------------------------------------- sign-in link */
+
+      const keeplinkUrl = $('keeplink-url');
+      const keeplinkNote = $('keeplink-note');
+
+      function sayAboutLink(text, kind = 'ok') {
+        keeplinkNote.className = `note ${kind}`;
+        keeplinkNote.textContent = text;
+        keeplinkNote.hidden = false;
+      }
+
+      /**
+       * Fetched on its own rather than read from the polled status.
+       *
+       * This is a bearer credential: anyone holding it can sign in as this account. It
+       * has no business in a response the page asks for four times a minute for as long
+       * as a tab is open.
+       */
+      async function loadRecoveryLink() {
+        const response = await fetch('/api/recovery');
+        if (!response.ok) return;
+        keeplinkUrl.value = (await response.json()).url;
+        $('keeplink-heading').hidden = false;
+        $('keeplink').hidden = false;
+      }
+
+      $('keeplink-copy').addEventListener('click', async () => {
+        keeplinkUrl.select();
+        try {
+          await navigator.clipboard.writeText(keeplinkUrl.value);
+          sayAboutLink('Copied. Put it somewhere you will still have it in a year.');
+        } catch {
+          // No clipboard permission, or an insecure context. The text is selected either
+          // way, so the instruction is still one somebody can follow.
+          sayAboutLink('Press Ctrl+C (or Cmd+C) to copy the selected link.', 'warn');
+        }
+      });
+
+      $('keeplink-new').addEventListener('click', async (event) => {
+        if (!confirm('Make a new sign-in link? The one you have saved will stop working.')) {
+          return;
+        }
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const response = await fetch('/api/recovery', { method: 'POST' });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          keeplinkUrl.value = (await response.json()).url;
+          sayAboutLink('New link made. Save this one — the old one no longer works.');
+        } catch {
+          sayAboutLink('Could not make a new link. Please try again.', 'warn');
+        }
+        button.disabled = false;
+      });
+
       /* -------------------------------------------------------------------- hero */
 
       function renderHero(data) {
@@ -422,6 +557,13 @@
           // The session expired while the page was open. Showing stale data would be
           // worse than showing the signed-out page.
           if (signedIn) location.reload();
+          // Nobody is signed in, and nothing on this page can change that on its own:
+          // connecting is a full navigation out to Sonos and back, which reloads the
+          // page. Polling on would ask the Worker and the database a question with a
+          // known answer four times a minute for as long as a landing-page tab is open.
+          // `schedule` still runs one check whenever the tab is brought back, so signing
+          // in from another tab is picked up.
+          else clearInterval(timer);
           return;
         }
         if (!response.ok) return;
@@ -430,19 +572,29 @@
         if (!signedIn) {
           signedIn = true;
           loadSettings().catch(() => undefined);
-          renderRooms(data.speakers ?? []);
+          loadRecoveryLink().catch(() => undefined);
         }
+        // Safe on every poll: `renderRooms` redraws only when the room list itself
+        // changed, so a newly discovered speaker appears without a reload and a tap in
+        // progress is never interrupted.
+        renderRooms(data.speakers ?? []);
 
         // A revoked grant beats every other state on this page: nothing works without
         // it, and until it is reconnected the rest of the status describes a pipeline
         // that cannot receive anything.
         if (data.sonos?.needsReauth) {
           needsAttention('step-sonos', 'Sonos revoked this connection. Reconnect it.');
-          const action = $('step-sonos').querySelector('.btn');
-          if (action) action.hidden = false;
-        } else if (data.households?.length) {
-          const count = data.rooms.length;
-          connected('step-sonos', `Connected, ${count} room${count === 1 ? '' : 's'}`);
+        } else if (data.sonos?.connected) {
+          // Keyed on the grant rather than on the room list. Linking saves the grant and
+          // redirects immediately, then discovers households in the background — so for
+          // the first poll or two after signing up there are no rooms yet, and keying on
+          // those showed a new user "Sonos connected" in the banner above a row still
+          // offering them a Connect button.
+          const count = data.rooms?.length ?? 0;
+          connected(
+            'step-sonos',
+            count ? `Connected, ${count} room${count === 1 ? '' : 's'}` : 'Connected, finding rooms…'
+          );
         }
 
         for (const target of data.targets ?? []) {
@@ -507,22 +659,57 @@
 
       /* ----------------------------------------------------------------- actions */
 
+      /** Turns a resync report into one sentence somebody can act on. */
+      function describeRescan(response, data) {
+        if (!response.ok || data.error) {
+          return data.error?.includes('SonosGrantMissing')
+            ? 'Sonos would not answer — the connection has been revoked. Reconnect Sonos above.'
+            : 'The rescan did not finish. Open the details below and try again in a minute.';
+        }
+        const households = data.households ?? [];
+        if (!households.length) {
+          return 'Sonos answered, but reported no households on this account. Check you signed ' +
+            'in with the Sonos account that owns your speakers.';
+        }
+        const groups = households.reduce((total, house) => total + house.groups, 0);
+        const problems = households.reduce((total, house) => total + house.errors.length, 0);
+        if (!groups) {
+          return 'Sonos answered, but reported no speakers. If a speaker is unplugged or off ' +
+            'the network it will not appear until it is back.';
+        }
+        const found = `Found ${groups} room${groups === 1 ? '' : 's'}.`;
+        return problems
+          ? `${found} ${problems} could not be subscribed — open the details below.`
+          : `${found} All of them are subscribed and will scrobble.`;
+      }
+
       // Re-runs household discovery and re-subscribes every group. The same work the
       // link flow does in the background, but here the result is visible — which is the
       // only way to see why linking silently found nothing.
       $('rescan').addEventListener('click', async (event) => {
         const button = event.currentTarget;
+        const said = $('rescan-said');
+        const detail = $('rescan-detail');
         const out = $('rescan-out');
         button.disabled = true;
         button.textContent = 'Rescanning…';
-        out.hidden = false;
-        out.textContent = 'Working…';
+        said.hidden = false;
+        said.className = 'note';
+        said.textContent = 'Working…';
+        detail.hidden = true;
         try {
           const response = await fetch('/api/resync', { method: 'POST' });
           const data = await response.json();
-          out.textContent = `HTTP ${response.status}\n` + JSON.stringify(data, null, 2);
+          // The banner that sends people here tells them to press this button, so the
+          // answer has to be a sentence. The report itself is still here, one click
+          // away, because it is what makes a failure reportable.
+          said.className = `note ${response.ok && !data.error ? 'ok' : 'warn'}`;
+          said.textContent = describeRescan(response, data);
+          out.textContent = JSON.stringify(data, null, 2);
+          detail.hidden = false;
         } catch (error) {
-          out.textContent = `Request failed: ${error}`;
+          said.className = 'note warn';
+          said.textContent = 'Could not reach the service. Check your connection and try again.';
         }
         button.disabled = false;
         button.textContent = 'Rescan rooms';
