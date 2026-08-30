@@ -91,34 +91,22 @@ for (const required of ['/fonts/Archivo-OFL.txt', '/fonts/IBMPlexMono-OFL.txt'])
 }
 
 /**
- * Every path the Worker routes must also be listed in `assets.run_worker_first`.
+ * `run_worker_first` must stay on.
  *
- * With `not_found_handling` set, the asset router answers navigation requests before the
- * Worker runs, so an unlisted route serves the 404 page to a browser while still working
- * from curl and from `fetch()`. Nothing else catches that: unit tests call the Worker
- * directly and never go through the asset router at all.
+ * Without it the asset router answers before the Worker runs, and every static page —
+ * the dashboard included — is served with none of the security headers in
+ * `src/lib/http.ts`. Nothing else catches that: unit tests call the Worker directly and
+ * never go through the asset router, so the CSP test passes either way. This is the one
+ * line of config that decides whether that test means anything.
  */
-const worker = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
-// Enough of a JSONC reader for a file we control: strip line comments, then parse.
 const config = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
-const first = JSON.parse(config.replace(/^\s*\/\/.*$/gm, '')).assets?.run_worker_first ?? [];
-
-const routed = new Set();
-for (const [, path] of worker.matchAll(/path (?:===|\.startsWith\()\s*'(\/[^']*)'/g)) {
-  routed.add(path);
-}
-if (routed.size === 0) problems.push('src/index.ts: no routes found; this check has gone stale');
-
-for (const path of [...routed].sort()) {
-  const covered = first.some((pattern) =>
-    pattern.endsWith('*') ? path.startsWith(pattern.slice(0, -1)) : pattern === path
+// Enough of a JSONC reader for a file we control: strip line comments, then parse.
+const assets = JSON.parse(config.replace(/^\s*\/\/.*$/gm, '')).assets ?? {};
+if (assets.run_worker_first !== true) {
+  problems.push(
+    'wrangler.jsonc: assets.run_worker_first must be true, or the static pages are ' +
+      'served with no Content-Security-Policy and no frame-ancestors'
   );
-  if (!covered) {
-    problems.push(
-      `wrangler.jsonc: ${path} is routed by the Worker but missing from ` +
-        'assets.run_worker_first, so a browser navigating to it gets the 404 page'
-    );
-  }
 }
 
 if (problems.length) {

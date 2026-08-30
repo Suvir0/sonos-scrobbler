@@ -24,6 +24,7 @@ import { SonosApiError } from './sonos/client.js';
 import type { SonosClient } from './sonos/client.js';
 import { clientForUser, SonosGrantMissing } from './sonos/account.js';
 import type { SonosPlayer } from './sonos/types.js';
+import { groupSessionName } from './do/group-session.js';
 
 /** Sonos expires a subscription after three days of no renewal. */
 export const SUBSCRIPTION_TTL_MS = 3 * 24 * 60 * 60_000;
@@ -57,8 +58,25 @@ export function retryDelayMs(failureCount: number): number {
 
 export type Namespace = 'groups' | 'playback' | 'playbackMetadata';
 
-export function subscriptionId(scope: 'household' | 'group', targetId: string, ns: Namespace) {
-  return `${scope}:${targetId}:${ns}`;
+/**
+ * The primary key of one subscription row.
+ *
+ * Scoped by user, which it was not until migration 0006. A household can have more than
+ * one member, and a person who arrives without a session cookie becomes a second account
+ * for the same speakers — so the Sonos id alone is not unique, and two accounts silently
+ * overwrote each other's rows. The user id leads because it is base64url and holds no
+ * colon; a Sonos group id (`RINCON_AAA:1`) does, so any other order would be ambiguous.
+ *
+ * Never parsed back apart. An event names a group, not a person, so the webhook finds
+ * rows by (scope, target_id, namespace) and delivers to every user who holds one.
+ */
+export function subscriptionId(
+  userId: string,
+  scope: 'household' | 'group',
+  targetId: string,
+  ns: Namespace
+) {
+  return `${userId}:${scope}:${targetId}:${ns}`;
 }
 
 async function recordSuccess(
@@ -241,7 +259,7 @@ export async function syncHousehold(
     await recordSuccess(
       env,
       {
-        id: subscriptionId('household', householdId, 'groups'),
+        id: subscriptionId(userId, 'household', householdId, 'groups'),
         userId,
         householdId,
         scope: 'household',
@@ -258,7 +276,7 @@ export async function syncHousehold(
     // request each time on something that is not going to start working on its own.
     await recordFailure(
       env,
-      subscriptionId('household', householdId, 'groups'),
+      subscriptionId(userId, 'household', householdId, 'groups'),
       error,
       nowMs
     );
@@ -320,9 +338,8 @@ export async function syncHousehold(
     await env.DB.prepare(
       `INSERT INTO sonos_groups (group_id, household_id, user_id, name, player_ids, seen_at)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(group_id) DO UPDATE SET
+       ON CONFLICT(group_id, user_id) DO UPDATE SET
          household_id = excluded.household_id,
-         user_id      = excluded.user_id,
          name         = excluded.name,
          player_ids   = COALESCE(excluded.player_ids, sonos_groups.player_ids),
          seen_at      = excluded.seen_at`
@@ -356,7 +373,7 @@ export async function syncHousehold(
         await recordSuccess(
           env,
           {
-            id: subscriptionId('group', group.id, namespace),
+            id: subscriptionId(userId, 'group', group.id, namespace),
             userId,
             householdId,
             scope: 'group',
@@ -379,7 +396,7 @@ export async function syncHousehold(
         // Same reason as the household anchor above: a row that keeps its old
         // `next_renewal_at` is retried every sweep forever and crowds out rows that
         // would have succeeded.
-        await recordFailure(env, subscriptionId('group', group.id, namespace), error, nowMs);
+        await recordFailure(env, subscriptionId(userId, 'group', group.id, namespace), error, nowMs);
       }
     }
   }
@@ -406,15 +423,24 @@ async function pruneVanishedGroups(
   for (const groupId of gone) {
     // Let the session close out anything it was mid-way through before discarding it —
     // a room that was regrouped may well have earned its scrobble.
-    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupId));
+    const stub = env.GROUP_SESSIONS.get(
+      env.GROUP_SESSIONS.idFromName(groupSessionName(userId, groupId))
+    );
     try {
       await stub.onGroupRemoved(Date.now());
     } catch {
       // A session that cannot be closed must not block pruning.
     }
-    await env.DB.prepare('DELETE FROM sonos_groups WHERE group_id = ?').bind(groupId).run();
-    await env.DB.prepare('DELETE FROM subscriptions WHERE scope = ? AND target_id = ?')
-      .bind('group', groupId)
+    // Scoped to this user throughout. Another member of the same household holds their
+    // own rows for the same Sonos group, and pruning theirs because this user's topology
+    // moved on would stop their scrobbling with nothing to show why.
+    await env.DB.prepare('DELETE FROM sonos_groups WHERE group_id = ? AND user_id = ?')
+      .bind(groupId, userId)
+      .run();
+    await env.DB.prepare(
+      "DELETE FROM subscriptions WHERE scope = 'group' AND target_id = ? AND user_id = ?"
+    )
+      .bind(groupId, userId)
       .run();
   }
 }
@@ -492,7 +518,7 @@ export async function renewDue(
       }
       await recordFailure(
         env,
-        subscriptionId('household', row.household_id, 'groups'),
+        subscriptionId(row.user_id, 'household', row.household_id, 'groups'),
         error,
         nowMs
       );

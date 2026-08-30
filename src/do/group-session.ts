@@ -64,6 +64,18 @@ const HINT_FRESHNESS_MS = 10_000;
  */
 const MAX_RECONCILE_ATTEMPTS = 3;
 
+/**
+ * The Durable Object name for one user's session in one group.
+ *
+ * Keyed by both, not by the group alone. Two members of a household hear the same
+ * speaker, so the same Sonos group id legitimately belongs to two accounts — and a
+ * single object for both meant `initialize` overwrote whose session it was on every
+ * event, so one person's play clock was continually reset by the other's.
+ */
+export function groupSessionName(userId: string, groupId: string): string {
+  return `${userId}:${groupId}`;
+}
+
 interface PendingTrack {
   track: ScrobbleCandidate;
   atMs: number;

@@ -13,7 +13,8 @@ const MIGRATIONS: (() => Promise<{ default: string }>)[] = [
   () => import('../../migrations/0002_topology_throttle.sql?raw'),
   () => import('../../migrations/0003_pipeline_health.sql?raw'),
   () => import('../../migrations/0004_sonos_reauth.sql?raw'),
-  () => import('../../migrations/0005_room_choice.sql?raw')
+  () => import('../../migrations/0005_room_choice.sql?raw'),
+  () => import('../../migrations/0006_identity.sql?raw')
 ];
 
 const TABLES = [

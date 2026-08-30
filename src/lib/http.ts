@@ -55,8 +55,11 @@ const SECURITY_HEADERS: Record<string, string> = {
  * Copies a response and applies the security headers.
  *
  * Applied centrally in the fetch handler rather than at each call site, because the one
- * response that would be forgotten is the one served straight from the assets binding —
- * which is the HTML page itself, the only response where a CSP does anything at all.
+ * response that would be forgotten is the HTML page itself — the only response where a
+ * CSP does anything at all. That page is a static asset, so it only passes through here
+ * because `assets.run_worker_first` is on in wrangler.jsonc. Turning that off serves the
+ * dashboard with no policy at all, and no test would notice: a test calls the Worker
+ * directly and never goes through the asset router that would have answered first.
  */
 export function harden(response: Response): Response {
   const headers = new Headers(response.headers);

@@ -67,6 +67,14 @@
             you.
           </li>
           <li>
+            <strong>Your sign-in link</strong>, twice over: as an HMAC, which is what the link
+            is looked up by, and encrypted, so the page can show it back to you. Signing in
+            with Sonos cannot tell you apart from anybody else who can reach the same
+            speakers, so without a link of your own a cleared cookie would leave your
+            account unreachable: still holding these credentials, and past the reach of the
+            delete button.
+          </li>
+          <li>
             <strong>A hashed dedupe key per queued play</strong>, so the same track is not
             submitted twice. It is an HMAC, not a title, and it is discarded with the play.
           </li>

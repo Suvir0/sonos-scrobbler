@@ -5,6 +5,7 @@ import { createSession, SESSION_COOKIE } from './lib/session.js';
 import { OAUTH_STATE_TTL_MS } from './do/oauth-state.js';
 import { SECURITY_CONTACT } from './routes/health.js';
 import { applySchema, resetTables } from './testing/schema.js';
+import { groupSessionName } from './do/group-session.js';
 
 const CLIENT_ID = 'test-client-id';
 const CLIENT_SECRET = 'test-client-secret';
@@ -29,7 +30,14 @@ async function seed(): Promise<void> {
       `INSERT INTO subscriptions (id, user_id, household_id, scope, target_id, namespace, next_renewal_at)
        VALUES (?, ?, ?, 'group', ?, ?, ?)`
     )
-      .bind(`group:${GROUP_ID}:${namespace}`, USER_ID, HOUSEHOLD_ID, GROUP_ID, namespace, now)
+      .bind(
+        `${USER_ID}:group:${GROUP_ID}:${namespace}`,
+        USER_ID,
+        HOUSEHOLD_ID,
+        GROUP_ID,
+        namespace,
+        now
+      )
       .run();
   }
 }
@@ -87,9 +95,9 @@ const TRACK = {
   }
 };
 
-async function lastSeq(namespace: string): Promise<number | null> {
+async function lastSeq(namespace: string, userId = USER_ID): Promise<number | null> {
   const row = await env.DB.prepare('SELECT last_seq_id FROM subscriptions WHERE id = ?')
-    .bind(`group:${GROUP_ID}:${namespace}`)
+    .bind(`${userId}:group:${GROUP_ID}:${namespace}`)
     .first<{ last_seq_id: number | null }>();
   return row?.last_seq_id ?? null;
 }
@@ -180,7 +188,7 @@ describe('the Sonos webhook', () => {
       positionMillis: 0
     });
 
-    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID)));
     await vi.waitFor(async () => {
       const snapshot = await stub.snapshot();
       expect(snapshot?.track?.artist).toBe('Anderson .Paak');
@@ -199,7 +207,7 @@ describe('the Sonos webhook', () => {
       positionMillis: 0
     });
 
-    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID)));
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(await stub.snapshot()).toBeUndefined();
   });
@@ -242,7 +250,7 @@ describe('the Sonos webhook', () => {
 
       await playSomething();
 
-      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID)));
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(await stub.snapshot()).toBeUndefined();
     });
@@ -259,7 +267,7 @@ describe('the Sonos webhook', () => {
 
       await playSomething();
 
-      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID)));
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(await stub.snapshot()).toBeUndefined();
     });
@@ -269,7 +277,7 @@ describe('the Sonos webhook', () => {
 
       await playSomething();
 
-      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID)));
       await vi.waitFor(async () => {
         expect((await stub.snapshot())?.track?.track).toBe('Come Down');
       });
@@ -281,7 +289,7 @@ describe('the Sonos webhook', () => {
       await seedRooms(['RINCON_A']);
       await playSomething();
 
-      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID)));
       await vi.waitFor(async () => {
         expect((await stub.snapshot())?.track?.track).toBe('Come Down');
       });
@@ -299,6 +307,97 @@ describe('the Sonos webhook', () => {
 
       await vi.waitFor(async () => {
         expect(await stub.snapshot()).toBeUndefined();
+      });
+    });
+  });
+
+  /**
+   * A Sonos event names a group, never a person, and one household can hold two accounts
+   * — a couple who both signed up, or one person who came back without a cookie and was
+   * given a second account. Before migration 0006 both of those collapsed into one
+   * subscription row, so the second account to link silently took the first one's events
+   * and the first one's dashboard went quiet with nothing to explain it.
+   */
+  describe('a household two accounts both watch', () => {
+    const OTHER_ID = 'user-2';
+
+    beforeEach(async () => {
+      const now = Date.now();
+      await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+        .bind(OTHER_ID, now)
+        .run();
+      for (const namespace of ['playback', 'playbackMetadata']) {
+        await env.DB.prepare(
+          `INSERT INTO subscriptions (id, user_id, household_id, scope, target_id, namespace, next_renewal_at)
+           VALUES (?, ?, ?, 'group', ?, ?, ?)`
+        )
+          .bind(
+            `${OTHER_ID}:group:${GROUP_ID}:${namespace}`,
+            OTHER_ID,
+            HOUSEHOLD_ID,
+            GROUP_ID,
+            namespace,
+            now
+          )
+          .run();
+      }
+    });
+
+    const sessionFor = (userId: string) =>
+      env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(groupSessionName(userId, GROUP_ID)));
+
+    it('delivers one event to both of them', async () => {
+      await postEvent('playbackMetadata', 'metadataStatus', TRACK);
+      await postEvent('playback', 'playbackStatus', {
+        playbackState: 'PLAYBACK_STATE_PLAYING',
+        positionMillis: 0
+      });
+
+      await vi.waitFor(async () => {
+        expect((await sessionFor(USER_ID).snapshot())?.track?.track).toBe('Come Down');
+        expect((await sessionFor(OTHER_ID).snapshot())?.track?.track).toBe('Come Down');
+      });
+    });
+
+    // Each account keeps its own play clock. One shared object meant every event
+    // re-initialized whose session it was, so the two continually reset each other.
+    it('gives each of them their own sequence high-water mark', async () => {
+      await postEvent('playbackMetadata', 'metadataStatus', TRACK, { seqId: '7' });
+      await vi.waitFor(async () => {
+        expect(await lastSeq('playbackMetadata')).toBe(7);
+        expect(await lastSeq('playbackMetadata', OTHER_ID)).toBe(7);
+      });
+    });
+
+    // One person's broken half must not swallow the event for the other. The second
+    // account here has no Sonos grant at all, which is what a revoked one looks like.
+    it('still reaches one when the other cannot be served', async () => {
+      await env.DB.prepare('DELETE FROM subscriptions WHERE user_id = ?').bind(OTHER_ID).run();
+      for (const namespace of ['playback', 'playbackMetadata']) {
+        await env.DB.prepare(
+          `INSERT INTO subscriptions (id, user_id, household_id, scope, target_id, namespace, next_renewal_at)
+           VALUES (?, ?, ?, 'group', ?, ?, ?)`
+        )
+          .bind(
+            `${OTHER_ID}:group:${GROUP_ID}:${namespace}`,
+            OTHER_ID,
+            HOUSEHOLD_ID,
+            GROUP_ID,
+            namespace,
+            Date.now()
+          )
+          .run();
+      }
+      await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(OTHER_ID).run();
+
+      await postEvent('playbackMetadata', 'metadataStatus', TRACK);
+      await postEvent('playback', 'playbackStatus', {
+        playbackState: 'PLAYBACK_STATE_PLAYING',
+        positionMillis: 0
+      });
+
+      await vi.waitFor(async () => {
+        expect((await sessionFor(USER_ID).snapshot())?.track?.track).toBe('Come Down');
       });
     });
   });
@@ -403,6 +502,142 @@ describe('routing', () => {
     );
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toContain('sonos_state');
+  });
+});
+
+/**
+ * The sign-in link.
+ *
+ * Sonos is the only identity here and nothing it returns names the person, so a cookie
+ * that is gone used to mean a second account for the same speakers — with the first left
+ * holding live credentials its owner could no longer reach. This is the way back that
+ * does not depend on the cookie.
+ */
+describe('the sign-in link', () => {
+  beforeEach(async () => {
+    await applySchema();
+    await resetTables();
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+      .bind(USER_ID, Date.now())
+      .run();
+  });
+
+  const cookieFor = async (userId: string) =>
+    `${SESSION_COOKIE}=${await createSession(env, userId)}`;
+
+  const keyFrom = (url: string) => new URL(url).searchParams.get('key') ?? '';
+
+  async function currentLink(cookie: string): Promise<string> {
+    const response = await SELF.fetch('https://example.com/api/recovery', {
+      headers: { cookie }
+    });
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { url: string }).url;
+  }
+
+  it('signs a browser with no cookie at all back into the same account', async () => {
+    const url = await currentLink(await cookieFor(USER_ID));
+
+    const recovered = await SELF.fetch(
+      `https://example.com/auth/recover?key=${keyFrom(url)}`,
+      { redirect: 'manual' }
+    );
+    expect(recovered.status).toBe(302);
+    expect(recovered.headers.get('location')).toContain('recovered=1');
+
+    // And the cookie it hands out is a real session for the original account, which is
+    // the whole claim: no second account, no stranded credentials.
+    const cookie = (recovered.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const account = await SELF.fetch('https://example.com/api/account', {
+      headers: { cookie }
+    });
+    expect(account.status).toBe(200);
+  });
+
+  it('hands out the same link every time, so it can be found again later', async () => {
+    const cookie = await cookieFor(USER_ID);
+    expect(await currentLink(cookie)).toBe(await currentLink(cookie));
+  });
+
+  it('stops the old link working as soon as a new one is made', async () => {
+    const cookie = await cookieFor(USER_ID);
+    const before = keyFrom(await currentLink(cookie));
+
+    const rotated = await SELF.fetch('https://example.com/api/recovery', {
+      method: 'POST',
+      headers: { cookie, origin: 'https://example.com' }
+    });
+    const after = keyFrom(((await rotated.json()) as { url: string }).url);
+    expect(after).not.toBe(before);
+
+    const stale = await SELF.fetch(`https://example.com/auth/recover?key=${before}`, {
+      redirect: 'manual'
+    });
+    expect(stale.headers.get('location')).toContain('recover_failed');
+  });
+
+  it('refuses a key that belongs to nobody, and an absent one', async () => {
+    for (const query of ['?key=not-a-real-key', '']) {
+      const response = await SELF.fetch(`https://example.com/auth/recover${query}`, {
+        redirect: 'manual'
+      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toContain('recover_failed');
+    }
+  });
+
+  // The link is a bearer credential. Storing it readable would make a dump of the users
+  // table a set of working sign-ins for every account in it.
+  it('stores no key that a database dump could be signed in with', async () => {
+    const url = await currentLink(await cookieFor(USER_ID));
+    const row = await env.DB.prepare(
+      'SELECT recovery_hash, recovery_enc FROM users WHERE id = ?'
+    )
+      .bind(USER_ID)
+      .first<{ recovery_hash: string | null; recovery_enc: string | null }>();
+
+    const key = keyFrom(url);
+    expect(key.length).toBeGreaterThan(20);
+    expect(row?.recovery_hash).not.toContain(key);
+    expect(row?.recovery_enc).not.toContain(key);
+  });
+
+  // A GET that mints a session is a login-CSRF primitive, and this page collects a
+  // ListenBrainz token. Somebody moved silently onto an attacker's account would paste
+  // their credential into it.
+  it('refuses to swap a signed-in browser onto a different account', async () => {
+    const other = 'user-elsewhere';
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)')
+      .bind(other, Date.now())
+      .run();
+    const theirKey = keyFrom(await currentLink(await cookieFor(other)));
+
+    const response = await SELF.fetch(`https://example.com/auth/recover?key=${theirKey}`, {
+      headers: { cookie: await cookieFor(USER_ID) },
+      redirect: 'manual'
+    });
+    expect(response.headers.get('location')).toContain('recover_signed_in');
+    expect(response.headers.get('set-cookie')).toBeNull();
+  });
+
+  // But reopening your own link while already signed in is ordinary and must still work.
+  it('accepts a browser already signed into the same account', async () => {
+    const cookie = await cookieFor(USER_ID);
+    const response = await SELF.fetch(
+      `https://example.com/auth/recover?key=${keyFrom(await currentLink(cookie))}`,
+      { headers: { cookie }, redirect: 'manual' }
+    );
+    expect(response.headers.get('location')).toContain('recovered=1');
+  });
+
+  it('needs a session to read or replace', async () => {
+    for (const method of ['GET', 'POST'] as const) {
+      const response = await SELF.fetch('https://example.com/api/recovery', {
+        method,
+        headers: { origin: 'https://example.com' }
+      });
+      expect(response.status).toBe(401);
+    }
   });
 });
 

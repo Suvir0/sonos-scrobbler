@@ -15,9 +15,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit",
-    "db:local": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --local --file=\"$f\" || exit 1; done",
-    "db:remote": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --remote -y --file=\"$f\" || exit 1; done",
-    "check:assets": "node scripts/check-assets.mjs"
+    "db:local": "wrangler d1 migrations apply sonos-scrobbler --local",
+    "db:remote": "wrangler d1 migrations apply sonos-scrobbler --remote",
+    "check:assets": "node scripts/check-assets.mjs",
+    "db:adopt": "wrangler d1 execute sonos-scrobbler --remote -y --command \"CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0001_init.sql'),('0002_topology_throttle.sql'),('0003_pipeline_health.sql'),('0004_sonos_reauth.sql'),('0005_room_choice.sql');\""
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.8",

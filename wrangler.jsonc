@@ -19,24 +19,20 @@
     // look like a working one.
     "not_found_handling": "404-page",
 
-    // With `not_found_handling` set, the asset router answers navigation requests for
-    // paths that match no file *before* the Worker ever runs — so every one of these
-    // paths served the 404 page to a browser while still working from curl, which sends
-    // no `Sec-Fetch-Mode: navigate`. That is exactly the set of paths a person reaches
-    // by clicking: "Connect Sonos", "Connect Last.fm", and both OAuth callbacks. The
-    // dashboard kept working because `fetch()` is not a navigation.
+    // Every request runs the Worker, including the ones that end up being a static
+    // file. That is not a routing preference — it is the only way the security headers
+    // in `src/lib/http.ts` reach the pages they exist for.
     //
-    // These are the paths `route()` in src/index.ts owns. Anything not listed here is
-    // still served straight from the edge by the asset router. Keep the two in step: a
-    // new route added there and not added here is invisible to unit tests and to curl,
-    // and broken for every real visitor.
-    "run_worker_first": [
-      "/auth/*",
-      "/api/*",
-      "/webhooks/*",
-      "/healthz",
-      "/.well-known/security.txt"
-    ]
+    // Left to itself the asset router answers before the Worker ever runs, so `/`,
+    // `/privacy` and the stylesheet were all served with no Content-Security-Policy and
+    // no `frame-ancestors 'none'` — on the one page that carries a delete-everything
+    // button and a token field. The unit test asserting otherwise passed the whole time,
+    // because a test calls the Worker directly and never goes through the asset router
+    // at all.
+    //
+    // It also means a path added to `route()` in src/index.ts cannot be shadowed by the
+    // 404 page, which is what `not_found_handling` did to every OAuth callback here once.
+    "run_worker_first": true
   },
 
   "vars": {

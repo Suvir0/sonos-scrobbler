@@ -178,7 +178,7 @@ describe('syncHousehold', () => {
     // Establish the rows first, so there is something to update.
     await syncHousehold(env, USER, HH, recordingClient().client, T0);
 
-    const id = subscriptionId('group', 'G1', 'playback');
+    const id = subscriptionId(USER, 'group', 'G1', 'playback');
     await syncHousehold(env, USER, HH, failingClient([{ id: 'G1', name: 'Den' }]), T0 + 60_000, {
       force: true
     });
@@ -198,7 +198,7 @@ describe('syncHousehold', () => {
   // hour forever" for a subscription that will never succeed.
   it('doubles the backoff on each successive failure', async () => {
     await syncHousehold(env, USER, HH, recordingClient().client, T0);
-    const id = subscriptionId('group', 'G1', 'playback');
+    const id = subscriptionId(USER, 'group', 'G1', 'playback');
 
     await syncHousehold(env, USER, HH, failingClient([{ id: 'G1' }]), T0 + 60_000, {
       force: true

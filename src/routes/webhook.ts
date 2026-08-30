@@ -23,7 +23,8 @@ import {
 } from '../sonos/events.js';
 import type { GroupsStatus, MetadataStatus, PlaybackStatus } from '../sonos/types.js';
 import { clientForUser } from '../sonos/account.js';
-import { syncHousehold, subscriptionId } from '../subscriptions.js';
+import { syncHousehold } from '../subscriptions.js';
+import { groupSessionName } from '../do/group-session.js';
 import { groupMayScrobble } from '../rooms.js';
 import { log } from '../lib/log.js';
 
@@ -68,36 +69,76 @@ export async function handleSonosWebhook(
   return OK;
 }
 
+/**
+ * Routes one verified event to everybody it belongs to.
+ *
+ * An event names a Sonos group or household — never a person. A household can have more
+ * than one member, and a person who returns without a session cookie becomes a second
+ * account for the same speakers, so the same target legitimately has more than one
+ * subscriber. Both of them heard the same song out of the same speaker, so both get it.
+ *
+ * Each subscriber is handled independently and in isolation: one user's dead Sonos grant
+ * or failing queue must not stop the event reaching the others.
+ */
 async function dispatch(env: Env, headers: SonosEventHeaders, body: unknown): Promise<void> {
   const nowMs = Date.now();
   const targetId = headers.targetValue;
-
   const scope = headers.namespace === 'groups' ? 'household' : 'group';
-  const id = subscriptionId(scope, targetId, headers.namespace as never);
 
-  const row = await env.DB.prepare(
-    'SELECT user_id, household_id, last_seq_id FROM subscriptions WHERE id = ?'
+  const subscribers = await env.DB.prepare(
+    `SELECT id, user_id, household_id, last_seq_id
+       FROM subscriptions
+      WHERE scope = ? AND target_id = ? AND namespace = ?`
   )
-    .bind(id)
-    .first<{ user_id: string; household_id: string; last_seq_id: number | null }>();
+    .bind(scope, targetId, headers.namespace)
+    .all<{ id: string; user_id: string; household_id: string; last_seq_id: number | null }>();
 
-  if (!row) {
+  const rows = subscribers.results ?? [];
+  if (!rows.length) {
     // An event for something we no longer track — a pruned group, an unlinked account.
-    log(env, 'info', 'sonos.event.unknown-subscription', { id });
+    log(env, 'info', 'sonos.event.unknown-subscription', {
+      namespace: headers.namespace,
+      targetId
+    });
     return;
   }
 
+  const outcomes = await Promise.allSettled(
+    rows.map((row) => deliver(env, headers, body, row, nowMs))
+  );
+  for (const outcome of outcomes) {
+    if (outcome.status === 'rejected') {
+      log(env, 'error', 'sonos.event.subscriber-failed', {
+        namespace: headers.namespace,
+        message:
+          outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)
+      });
+    }
+  }
+}
+
+/** One subscriber's share of one event. */
+async function deliver(
+  env: Env,
+  headers: SonosEventHeaders,
+  body: unknown,
+  row: { id: string; user_id: string; household_id: string; last_seq_id: number | null },
+  nowMs: number
+): Promise<void> {
   // The signature covers only headers, not the body, so a captured request could be
   // replayed carrying different content. The sequence high-water mark is what stops it.
+  // Per subscription row, so one subscriber's high-water mark cannot suppress another's.
   if (!isFreshSequence(headers.seqId, row.last_seq_id ?? undefined)) {
-    log(env, 'warn', 'sonos.event.stale-sequence', { id, seqId: headers.seqId });
+    log(env, 'warn', 'sonos.event.stale-sequence', { id: row.id, seqId: headers.seqId });
     return;
   }
   // last_event_at rides along on an UPDATE that was happening anyway, and is what
   // lets the status page distinguish "nobody is listening" from "nothing is arriving".
   await env.DB.prepare('UPDATE subscriptions SET last_seq_id = ?, last_event_at = ? WHERE id = ?')
-    .bind(Number(headers.seqId), nowMs, id)
+    .bind(Number(headers.seqId), nowMs, row.id)
     .run();
+
+  const targetId = headers.targetValue;
 
   if (headers.namespace === 'groups') {
     // The topology changed: subscribe any brand new group immediately rather than
@@ -132,7 +173,9 @@ async function dispatch(env: Env, headers: SonosEventHeaders, body: unknown): Pr
     return;
   }
 
-  const session = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(targetId));
+  const session = env.GROUP_SESSIONS.get(
+    env.GROUP_SESSIONS.idFromName(groupSessionName(row.user_id, targetId))
+  );
 
   // Cheap and idempotent, and it means a session created by an event rather than by
   // the link flow still knows whose it is and what their source policy is.
