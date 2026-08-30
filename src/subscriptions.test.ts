@@ -49,6 +49,30 @@ function recordingClient() {
   return { client, paths };
 }
 
+/** A client that reports a topology of two rooms in one group. */
+function topologyClient() {
+  return new SonosClient({
+    baseUrl: 'https://api.ws.sonos.com/control/api/v1',
+    accessToken: async () => 'token',
+    budget: new RequestBudget(),
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'GET') {
+        return new Response(
+          JSON.stringify({
+            groups: [{ id: 'G1', name: 'Den + 1', playerIds: ['P_DEN', 'P_KITCHEN'] }],
+            players: [
+              { id: 'P_DEN', name: 'Den' },
+              { id: 'P_KITCHEN', name: 'Kitchen' }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(null, { status: 200 });
+    }) as typeof fetch
+  });
+}
+
 describe('syncHousehold', () => {
   beforeEach(async () => {
     await applySchema();
@@ -211,5 +235,100 @@ describe('syncHousehold', () => {
     // Three groups at two subscribes each, then the check refuses the fourth.
     expect(paths.length).toBe(6);
     expect(result.groupsSeen).toBe(20);
+  });
+});
+
+describe('recording the topology', () => {
+  beforeEach(async () => {
+    await applySchema();
+    await resetTables();
+    await env.DB.prepare('INSERT INTO users (id, created_at) VALUES (?, ?)').bind(USER, T0).run();
+    await env.DB.prepare(
+      'INSERT INTO households (household_id, user_id, name, created_at) VALUES (?, ?, ?, ?)'
+    )
+      .bind(HH, USER, 'Home', T0)
+      .run();
+  });
+
+  it('records every room, so there is something to switch off', async () => {
+    await syncHousehold(env, USER, HH, topologyClient(), T0);
+
+    const rows = await env.DB.prepare(
+      'SELECT player_id, name, scrobble FROM sonos_players WHERE user_id = ? ORDER BY player_id'
+    )
+      .bind(USER)
+      .all<{ player_id: string; name: string; scrobble: number }>();
+
+    expect(rows.results).toEqual([
+      { player_id: 'P_DEN', name: 'Den', scrobble: 1 },
+      { player_id: 'P_KITCHEN', name: 'Kitchen', scrobble: 1 }
+    ]);
+  });
+
+  it('records which rooms are in each group', async () => {
+    await syncHousehold(env, USER, HH, topologyClient(), T0);
+
+    const row = await env.DB.prepare('SELECT player_ids FROM sonos_groups WHERE group_id = ?')
+      .bind('G1')
+      .first<{ player_ids: string }>();
+
+    expect(JSON.parse(row!.player_ids)).toEqual(['P_DEN', 'P_KITCHEN']);
+  });
+
+  // The column a person set by hand. A re-sync renames rooms and refreshes timestamps;
+  // it must never quietly switch a room back on.
+  it('leaves a switched-off room switched off across a re-sync', async () => {
+    await syncHousehold(env, USER, HH, topologyClient(), T0);
+    await env.DB.prepare('UPDATE sonos_players SET scrobble = 0 WHERE player_id = ?')
+      .bind('P_DEN')
+      .run();
+
+    await syncHousehold(
+      env,
+      USER,
+      HH,
+      topologyClient(),
+      T0 + MIN_TOPOLOGY_SYNC_INTERVAL_MS + 1
+    );
+
+    const row = await env.DB.prepare('SELECT scrobble FROM sonos_players WHERE player_id = ?')
+      .bind('P_DEN')
+      .first<{ scrobble: number }>();
+    expect(row?.scrobble).toBe(0);
+  });
+
+  // A groups event carries the topology, so the sync must take it from there rather
+  // than spend a request re-fetching what it was just handed.
+  it('takes the rooms from an event payload without calling Sonos', async () => {
+    const { client, paths } = recordingClient();
+    await syncHousehold(env, USER, HH, client, T0, {
+      subscribeHousehold: false,
+      knownGroups: [{ id: 'G9', name: 'Loft', playerIds: ['P_LOFT'] }],
+      knownPlayers: [{ id: 'P_LOFT', name: 'Loft' }]
+    });
+
+    expect(paths.some((path) => path.startsWith('GET'))).toBe(false);
+    const row = await env.DB.prepare('SELECT name FROM sonos_players WHERE player_id = ?')
+      .bind('P_LOFT')
+      .first<{ name: string }>();
+    expect(row?.name).toBe('Loft');
+  });
+
+  // A payload that omits membership must not erase what we already knew, because an
+  // unknown membership is treated as permitted and would silently start scrobbling a
+  // room somebody had switched off.
+  it('keeps a known group membership when a later payload omits it', async () => {
+    await syncHousehold(env, USER, HH, topologyClient(), T0);
+
+    await syncHousehold(env, USER, HH, recordingClient().client, T0 + 1, {
+      force: true,
+      subscribeHousehold: false,
+      knownGroups: [{ id: 'G1', name: 'Den + 1' }]
+    });
+
+    const row = await env.DB.prepare('SELECT player_ids FROM sonos_groups WHERE group_id = ?')
+      .bind('G1')
+      .first<{ player_ids: string }>();
+    expect(JSON.parse(row!.player_ids)).toEqual(['P_DEN', 'P_KITCHEN']);
   });
 });

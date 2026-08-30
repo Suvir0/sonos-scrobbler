@@ -1,5 +1,5 @@
 /**
- * The two playback-source choices, and nothing else.
+ * The playback-source choices, and nothing else.
  *
  * Both columns have existed in the schema since the first migration and both are read
  * on every event, but neither was reachable by a user — so the defaults were the only
@@ -19,15 +19,22 @@ import { json, problem } from '../lib/http.js';
 export interface Settings {
   scrobbleRadio: boolean;
   allowHandoff: boolean;
+  skipLongTracks: boolean;
 }
 
+/** The keys `updateSettings` will accept, and the order the page sends them in. */
+const KEYS = ['scrobbleRadio', 'allowHandoff', 'skipLongTracks'] as const;
+
 export async function readSettings(env: Env, userId: string): Promise<Settings> {
-  const row = await env.DB.prepare('SELECT scrobble_radio, allow_handoff FROM users WHERE id = ?')
+  const row = await env.DB.prepare(
+    'SELECT scrobble_radio, allow_handoff, skip_long_tracks FROM users WHERE id = ?'
+  )
     .bind(userId)
-    .first<{ scrobble_radio: number; allow_handoff: number }>();
+    .first<{ scrobble_radio: number; allow_handoff: number; skip_long_tracks: number }>();
   return {
     scrobbleRadio: (row?.scrobble_radio ?? 1) === 1,
-    allowHandoff: (row?.allow_handoff ?? 0) === 1
+    allowHandoff: (row?.allow_handoff ?? 0) === 1,
+    skipLongTracks: (row?.skip_long_tracks ?? 1) === 1
   };
 }
 
@@ -50,7 +57,7 @@ export async function updateSettings(
   // refused rather than ignored: coercing `"false"` to true would silently re-enable
   // something a user turned off, and ignoring it would answer 200 with the old value —
   // which the page reports as "Saved" while the setting did not move.
-  for (const key of ['scrobbleRadio', 'allowHandoff'] as const) {
+  for (const key of KEYS) {
     if (key in body && typeof body[key] !== 'boolean') {
       return problem(400, 'bad_value', `${key} must be true or false.`);
     }
@@ -59,11 +66,19 @@ export async function updateSettings(
   const current = await readSettings(env, userId);
   const next: Settings = {
     scrobbleRadio: body.scrobbleRadio ?? current.scrobbleRadio,
-    allowHandoff: body.allowHandoff ?? current.allowHandoff
+    allowHandoff: body.allowHandoff ?? current.allowHandoff,
+    skipLongTracks: body.skipLongTracks ?? current.skipLongTracks
   };
 
-  await env.DB.prepare('UPDATE users SET scrobble_radio = ?, allow_handoff = ? WHERE id = ?')
-    .bind(next.scrobbleRadio ? 1 : 0, next.allowHandoff ? 1 : 0, userId)
+  await env.DB.prepare(
+    'UPDATE users SET scrobble_radio = ?, allow_handoff = ?, skip_long_tracks = ? WHERE id = ?'
+  )
+    .bind(
+      next.scrobbleRadio ? 1 : 0,
+      next.allowHandoff ? 1 : 0,
+      next.skipLongTracks ? 1 : 0,
+      userId
+    )
     .run();
 
   return json(next);

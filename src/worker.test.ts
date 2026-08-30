@@ -204,6 +204,105 @@ describe('the Sonos webhook', () => {
     expect(await stub.snapshot()).toBeUndefined();
   });
 
+  describe('rooms that are switched off', () => {
+    // The group has to be recorded with its members before the preference can reach an
+    // event: an event names a group, and this row is what turns that into rooms.
+    async function seedRooms(playerIds: string[]): Promise<void> {
+      for (const [index, playerId] of playerIds.entries()) {
+        await env.DB.prepare(
+          `INSERT INTO sonos_players (player_id, user_id, household_id, name, seen_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+          .bind(playerId, USER_ID, HOUSEHOLD_ID, `Room ${index + 1}`, Date.now())
+          .run();
+      }
+      await env.DB.prepare(
+        `INSERT INTO sonos_groups (group_id, household_id, user_id, name, player_ids, seen_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+        .bind(GROUP_ID, HOUSEHOLD_ID, USER_ID, 'Room 1', JSON.stringify(playerIds), Date.now())
+        .run();
+    }
+
+    async function playSomething(): Promise<void> {
+      await postEvent('playbackMetadata', 'metadataStatus', TRACK);
+      await postEvent('playback', 'playbackStatus', {
+        playbackState: 'PLAYBACK_STATE_PLAYING',
+        positionMillis: 0
+      });
+    }
+
+    it('starts no session for a room the user switched off', async () => {
+      await seedRooms(['RINCON_A']);
+      await env.DB.prepare(
+        'UPDATE sonos_players SET scrobble = 0 WHERE user_id = ? AND player_id = ?'
+      )
+        .bind(USER_ID, 'RINCON_A')
+        .run();
+
+      await playSomething();
+
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await stub.snapshot()).toBeUndefined();
+    });
+
+    // The answer chosen deliberately: switching a room off is a promise about that
+    // speaker, not one that lapses the moment somebody groups it with another room.
+    it('silences a whole group when one of its rooms is off', async () => {
+      await seedRooms(['RINCON_A', 'RINCON_B']);
+      await env.DB.prepare(
+        'UPDATE sonos_players SET scrobble = 0 WHERE user_id = ? AND player_id = ?'
+      )
+        .bind(USER_ID, 'RINCON_B')
+        .run();
+
+      await playSomething();
+
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await stub.snapshot()).toBeUndefined();
+    });
+
+    it('plays normally when every room in the group is on', async () => {
+      await seedRooms(['RINCON_A', 'RINCON_B']);
+
+      await playSomething();
+
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      await vi.waitFor(async () => {
+        expect((await stub.snapshot())?.track?.track).toBe('Come Down');
+      });
+    });
+
+    // Switching a room off mid-track drops what was in flight rather than finalizing
+    // it. The answer to "may this room scrobble" is no as of now.
+    it('drops a track already in flight when its room is switched off', async () => {
+      await seedRooms(['RINCON_A']);
+      await playSomething();
+
+      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(GROUP_ID));
+      await vi.waitFor(async () => {
+        expect((await stub.snapshot())?.track?.track).toBe('Come Down');
+      });
+
+      await env.DB.prepare(
+        'UPDATE sonos_players SET scrobble = 0 WHERE user_id = ? AND player_id = ?'
+      )
+        .bind(USER_ID, 'RINCON_A')
+        .run();
+
+      await postEvent('playback', 'playbackStatus', {
+        playbackState: 'PLAYBACK_STATE_PLAYING',
+        positionMillis: 90_000
+      });
+
+      await vi.waitFor(async () => {
+        expect(await stub.snapshot()).toBeUndefined();
+      });
+    });
+  });
+
   it('ignores an event with no signature header', async () => {
     const response = await SELF.fetch('https://example.com/webhooks/sonos', {
       method: 'POST',
@@ -365,7 +464,7 @@ describe('hardening', () => {
 
     expect(
       await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
-    ).toEqual({ scrobbleRadio: true, allowHandoff: false });
+    ).toEqual({ scrobbleRadio: true, allowHandoff: false, skipLongTracks: true });
 
     await SELF.fetch('https://example.com/api/settings', {
       method: 'PUT',
@@ -376,7 +475,7 @@ describe('hardening', () => {
     // A partial update leaves the key it did not mention alone.
     expect(
       await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
-    ).toEqual({ scrobbleRadio: false, allowHandoff: false });
+    ).toEqual({ scrobbleRadio: false, allowHandoff: false, skipLongTracks: true });
   });
 
   // A 200 carrying the old value is worse than an error: the page reports "Saved" and
@@ -391,7 +490,77 @@ describe('hardening', () => {
     expect(response.status).toBe(400);
     expect(
       await (await SELF.fetch('https://example.com/api/settings', { headers: { cookie } })).json()
-    ).toEqual({ scrobbleRadio: true, allowHandoff: false });
+    ).toEqual({ scrobbleRadio: true, allowHandoff: false, skipLongTracks: true });
+  });
+
+  describe('the room endpoint', () => {
+    async function withRoom(cookie: string): Promise<void> {
+      await env.DB.prepare(
+        `INSERT INTO sonos_players (player_id, user_id, household_id, name, seen_at)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+        .bind('RINCON_LIVING', USER_ID, HOUSEHOLD_ID, 'Living Room', Date.now())
+        .run();
+      expect(cookie).toBeTruthy();
+    }
+
+    it('lists the rooms and turns one off', async () => {
+      const cookie = await signedIn();
+      await withRoom(cookie);
+
+      expect(
+        await (await SELF.fetch('https://example.com/api/rooms', { headers: { cookie } })).json()
+      ).toEqual({ rooms: [{ id: 'RINCON_LIVING', name: 'Living Room', scrobble: true }] });
+
+      const response = await SELF.fetch('https://example.com/api/rooms', {
+        method: 'PUT',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ playerId: 'RINCON_LIVING', scrobble: false })
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        rooms: [{ id: 'RINCON_LIVING', name: 'Living Room', scrobble: false }]
+      });
+    });
+
+    // Coercing `"false"` to true is how a room somebody switched off comes back on.
+    it('refuses a scrobble value that is not a boolean', async () => {
+      const cookie = await signedIn();
+      await withRoom(cookie);
+      const response = await SELF.fetch('https://example.com/api/rooms', {
+        method: 'PUT',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ playerId: 'RINCON_LIVING', scrobble: 'false' })
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it('refuses a body with no player id', async () => {
+      const cookie = await signedIn();
+      const response = await SELF.fetch('https://example.com/api/rooms', {
+        method: 'PUT',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ scrobble: false })
+      });
+      expect(response.status).toBe(400);
+    });
+
+    // A 200 here would show a room as off on the page while every event kept
+    // scrobbling it.
+    it('answers 404 for a player that is not one of yours', async () => {
+      const cookie = await signedIn();
+      const response = await SELF.fetch('https://example.com/api/rooms', {
+        method: 'PUT',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ playerId: 'RINCON_SOMEBODY_ELSE', scrobble: false })
+      });
+      expect(response.status).toBe(404);
+    });
+
+    it('refuses room access without a session', async () => {
+      const response = await SELF.fetch('https://example.com/api/rooms', { redirect: 'manual' });
+      expect(response.status).toBe(401);
+    });
   });
 
   it('refuses a body that is not a JSON object', async () => {

@@ -27,6 +27,22 @@ const NEVER_SCROBBLE_CONTAINERS: ReadonlySet<string> = new Set([
 const NEVER_SCROBBLE_TRACKS: ReadonlySet<string> = new Set(['episode', 'show', 'audiobook']);
 
 /**
+ * The longest a track may claim to be and still be treated as a song.
+ *
+ * Sonos refuses TV, line-in, podcasts and audiobooks by container type, and handoff is
+ * off by default, which is where a YouTube video normally enters a speaker. What gets
+ * through all of that is a long file wearing a title and an artist: a DJ set, a mix, a
+ * film soundtrack as one item, a sleep recording. None of those are a song, and a
+ * scrobble of one is a corruption of a listening history in the same way a podcast
+ * would be.
+ *
+ * Twenty minutes is above essentially every song and below essentially every mix. It
+ * is not above every real recording, which is why `skipLongTracks` exists as a setting
+ * rather than this being a hard rule.
+ */
+export const MAX_SONG_MS = 20 * 60_000;
+
+/**
  * Containers whose tracks are live or programmed radio.
  *
  * These still scrobble, but they have no reliable duration, so they fall under the
@@ -43,7 +59,8 @@ export type DeclineReason =
   | 'not-music'
   | 'incomplete-metadata'
   | 'unparseable-stream'
-  | 'handoff-source';
+  | 'handoff-source'
+  | 'too-long';
 
 export interface ScrobbleCandidate {
   artist: string;
@@ -72,6 +89,14 @@ export interface ClassifyOptions {
   allowHandoff?: boolean;
   /** Whether to scrobble radio at all. */
   allowRadio?: boolean;
+  /**
+   * The longest a track may claim to be. Undefined removes the ceiling entirely.
+   *
+   * Only ever applied to a reported duration. Radio reports the stream's length rather
+   * than the song's, and `trackCandidate` already drops it for that reason, so a
+   * station is never refused by this.
+   */
+  maxTrackMs?: number;
 }
 
 export function isRadioContainer(type: SonosContainerType | undefined): boolean {
@@ -137,7 +162,7 @@ function trackCandidate(track: SonosTrack, isRadio: boolean): ScrobbleCandidate 
 }
 
 export function classify(status: MetadataStatus, options: ClassifyOptions = {}): Classification {
-  const { allowHandoff = false, allowRadio = true } = options;
+  const { allowHandoff = false, allowRadio = true, maxTrackMs } = options;
   const containerType = status.container?.type;
   const track = status.currentItem?.track;
 
@@ -167,7 +192,16 @@ export function classify(status: MetadataStatus, options: ClassifyOptions = {}):
   // Structured metadata is always preferred over the free-text stream string.
   if (track) {
     const candidate = trackCandidate(track, isRadio);
-    if (candidate) return { scrobbleable: true, candidate };
+    if (candidate) {
+      if (
+        maxTrackMs !== undefined &&
+        candidate.durationMs !== undefined &&
+        candidate.durationMs > maxTrackMs
+      ) {
+        return { scrobbleable: false, reason: 'too-long' };
+      }
+      return { scrobbleable: true, candidate };
+    }
   }
 
   // A track object that exists but lacks an artist or a title. Distinct from nothing

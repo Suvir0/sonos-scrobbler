@@ -23,6 +23,7 @@ import type { Env } from './env.js';
 import { SonosApiError } from './sonos/client.js';
 import type { SonosClient } from './sonos/client.js';
 import { clientForUser, SonosGrantMissing } from './sonos/account.js';
+import type { SonosPlayer } from './sonos/types.js';
 
 /** Sonos expires a subscription after three days of no renewal. */
 export const SUBSCRIPTION_TTL_MS = 3 * 24 * 60 * 60_000;
@@ -145,7 +146,13 @@ export interface SyncOptions {
    * Groups from an event payload, used instead of spending a `getGroups` call. A
    * groups event already carries the full topology.
    */
-  knownGroups?: readonly { id: string; name?: string }[];
+  knownGroups?: readonly { id: string; name?: string; playerIds?: readonly string[] }[];
+  /**
+   * Players from the same payload. Carried separately because that is how Sonos sends
+   * them: a group names its member ids, and the names those ids belong to live in a
+   * sibling list.
+   */
+  knownPlayers?: readonly SonosPlayer[];
   /** Bypass the interval floor. Only for a user-initiated resync. */
   force?: boolean;
   /**
@@ -191,6 +198,7 @@ export async function syncHousehold(
     subscribeHousehold = true,
     onlyMissing = false,
     knownGroups,
+    knownPlayers,
     force = false,
     callBudget = Number.POSITIVE_INFINITY
   } = options;
@@ -258,15 +266,35 @@ export async function syncHousehold(
 
   // A groups event already carries the whole topology, so re-fetching it is a wasted
   // call against a shared quota.
-  let groups: readonly { id: string; name?: string }[];
+  let groups: readonly { id: string; name?: string; playerIds?: readonly string[] }[];
+  let players: readonly SonosPlayer[] | undefined;
   if (knownGroups) {
     groups = knownGroups;
+    players = knownPlayers;
   } else {
     const status = await client.getGroups(householdId);
     result.callsUsed += 1;
     groups = status.groups ?? [];
+    players = status.players;
   }
   result.groupsSeen = groups.length;
+
+  // The rooms themselves, so a user has something to switch off. Upserted rather than
+  // replaced, and never pruned: `scrobble` is the one column here a person set by hand,
+  // and a speaker that drops off the network for an afternoon must not come back
+  // switched on again. See migration 0005.
+  for (const player of players ?? []) {
+    await env.DB.prepare(
+      `INSERT INTO sonos_players (player_id, user_id, household_id, name, seen_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(player_id, user_id) DO UPDATE SET
+         household_id = excluded.household_id,
+         name         = excluded.name,
+         seen_at      = excluded.seen_at`
+    )
+      .bind(player.id, userId, householdId, player.name ?? null, nowMs)
+      .run();
+  }
 
   // Which groups already hold both subscriptions, so an unchanged topology costs zero
   // Sonos requests.
@@ -290,15 +318,26 @@ export async function syncHousehold(
 
   for (const group of groups) {
     await env.DB.prepare(
-      `INSERT INTO sonos_groups (group_id, household_id, user_id, name, seen_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO sonos_groups (group_id, household_id, user_id, name, player_ids, seen_at)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(group_id) DO UPDATE SET
          household_id = excluded.household_id,
          user_id      = excluded.user_id,
          name         = excluded.name,
+         player_ids   = COALESCE(excluded.player_ids, sonos_groups.player_ids),
          seen_at      = excluded.seen_at`
     )
-      .bind(group.id, householdId, userId, group.name ?? null, nowMs)
+      .bind(
+        group.id,
+        householdId,
+        userId,
+        group.name ?? null,
+        // COALESCE above keeps the last known membership when a payload omits it. A
+        // group whose members we forget silently starts scrobbling again, because an
+        // unknown membership is treated as permitted.
+        group.playerIds ? JSON.stringify([...group.playerIds]) : null,
+        nowMs
+      )
       .run();
 
     if (onlyMissing && existing.has(group.id)) continue;

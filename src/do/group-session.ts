@@ -15,7 +15,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
 import { clientForUser } from '../sonos/account.js';
-import { classify, type ScrobbleCandidate } from '../sonos/classify.js';
+import { classify, MAX_SONG_MS, type ScrobbleCandidate } from '../sonos/classify.js';
 import type { MetadataStatus, PlaybackStatus } from '../sonos/types.js';
 import {
   anchor,
@@ -80,6 +80,17 @@ export interface GroupSessionInit {
   groupId: string;
   allowRadio: boolean;
   allowHandoff: boolean;
+  /**
+   * Whether every room in this group is switched on for scrobbling.
+   *
+   * Resolved per event by the webhook rather than stored here, because the answer
+   * changes when somebody regroups rooms as well as when they change a setting.
+   * Optional so that a config written before this existed reads as permitted: the
+   * absence of a preference has never meant "off".
+   */
+  scrobbleEnabled?: boolean;
+  /** Whether to refuse a track claiming to be longer than a song. */
+  skipLongTracks?: boolean;
 }
 
 /** What the DO reports back after handling an event, for logging and diagnostics. */
@@ -108,9 +119,35 @@ export class GroupSession extends DurableObject<Env> {
     await this.ctx.storage.deleteAlarm();
   }
 
+  /**
+   * Drops whatever this group had in flight, for a room that is switched off.
+   *
+   * Not `reset()`: the config is what the next event needs in order to know the room is
+   * off, and deleting it would make the following event start a session before the
+   * webhook re-initialized. Returns the outcome the caller should report.
+   *
+   * Nothing here finalizes the session. A track that was mid-play when its room was
+   * switched off has not earned anything, because the answer to "may this room
+   * scrobble" is no as of now, not as of the next track.
+   */
+  private async standDown(): Promise<EventOutcome> {
+    const [session, pending] = await Promise.all([
+      this.session(),
+      this.ctx.storage.get<PendingTrack>('pending')
+    ]);
+    if (session || pending) {
+      await this.ctx.storage.delete(['session', 'pending', 'hint', 'reconcileAttempts']);
+      await this.ctx.storage.deleteAlarm();
+    }
+    return { declined: 'room-off' };
+  }
+
   /* ------------------------------------------------------------ event entry */
 
   async onPlaybackStatus(status: PlaybackStatus, nowMs: number): Promise<EventOutcome> {
+    const gate = await this.config();
+    if (gate?.scrobbleEnabled === false) return await this.standDown();
+
     const positionMs = status.positionMillis ?? 0;
     const playing = status.playbackState === 'PLAYBACK_STATE_PLAYING';
 
@@ -155,9 +192,12 @@ export class GroupSession extends DurableObject<Env> {
 
   async onMetadataStatus(status: MetadataStatus, nowMs: number): Promise<EventOutcome> {
     const config = await this.config();
+    if (config?.scrobbleEnabled === false) return await this.standDown();
+
     const result = classify(status, {
       allowRadio: config?.allowRadio ?? true,
-      allowHandoff: config?.allowHandoff ?? false
+      allowHandoff: config?.allowHandoff ?? false,
+      ...(config?.skipLongTracks === false ? {} : { maxTrackMs: MAX_SONG_MS })
     });
 
     const current = await this.session();
