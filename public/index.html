@@ -599,8 +599,20 @@
 
         for (const target of data.targets ?? []) {
           const id = target.kind === 'lastfm' ? 'step-lastfm' : 'step-listenbrainz';
-          if (target.needsReauth) {
-            needsAttention(id, 'Reconnect needed: the credentials were rejected');
+          if (!target.enabled) {
+            // Switched off rather than broken — almost always because another account on
+            // these speakers took over scrobbling to this same service account. Without
+            // this branch the row read "Connected as candiedlmao" over a target that was
+            // deliberately submitting nothing.
+            needsAttention(id, target.lastError || 'Scrobbling here is switched off');
+          } else if (target.needsReauth) {
+            // The service's own words when we have them. "The credentials were rejected"
+            // is a guess, and it is wrong in the case that matters most: ListenBrainz
+            // refuses listens from an account with no verified email while still
+            // accepting the token as valid, so the reconnect this wording asks for
+            // cannot possibly work. Set as text, never as HTML — this string comes from
+            // another service.
+            needsAttention(id, target.lastError || 'Reconnect needed: the credentials were rejected');
           } else {
             connected(id, `Connected as ${target.username ?? 'you'}`);
           }

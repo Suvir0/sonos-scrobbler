@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+**One person's plays are no longer scrobbled twice.** Sonos names speakers, not
+people, so somebody returning without a session cookie — cleared it, new browser,
+or simply past the 30-day session — is handed a new account that then links the
+same household, groups and subscriptions as the old one. `dispatch` delivers each
+event to every subscriber, so both accounts ran their own play clock and both
+submitted to the same Last.fm account; the per-user dedupe cannot see across
+accounts and Last.fm only collapses an exact timestamp match, so two clocks a
+second apart both landed. Found in production as four user rows for one person,
+two of them live and mirroring each other exactly.
+
+The fix does not try to tell the two cases apart from Sonos, because Sonos cannot:
+it tests whether two accounts on a *shared household* submit to the *same service
+account*. A couple have two Last.fm accounts and a duplicate has one, so the test
+fires exactly when plays would double and stays silent when they would not —
+including for somebody with two separate Sonos homes pointed at one Last.fm. The
+newest link wins and the older target is disabled rather than deleted: reversible,
+symmetric (reconnecting on the older account moves it back), and it grants nothing
+— the losing account keeps its Sonos grant, its sign-in link and its delete button.
+
+**A rejected credential now says why it was rejected.** ListenBrainz answers
+`validate-token` with `valid: true` for a token belonging to a MetaBrainz account
+with no verified email address, then answers `submit-listens` with 401 and a
+paragraph naming the cause and linking the fix. `UserQueue.flush` discarded that
+paragraph and set a boolean, so the page offered its one hardcoded sentence — "the
+credentials were rejected" — which advises reconnecting, the single action that
+provably cannot help when the token validates every time. Pasting it again
+succeeded, the next play 401'd again, and the loop had no exit and no clue in it.
+The service's own words are now stored on `targets.last_error` and shown in place
+of the guess.
+
+**Nothing ever cleared `needs_reauth`.** Only a fresh credential did, so fixing the
+actual cause — verifying the email, waiting out an outage — left the page reporting
+a rejected credential until the user happened to re-paste a token that was never
+the problem. A delivery that lands now clears both the flag and the message, which
+is the only honest proof the credential works.
+
+**A transient failure is no longer reported as a dead credential.** A retryable
+outcome records the service's explanation without setting `needs_reauth`, so a 503
+reads as an outage rather than sending somebody off to re-paste a working token.
+
+Note for operators: this adds `targets.last_error`, and `/api/account` selects it.
+Apply `0007_target_error.sql` before deploying, or `/healthz` will report
+`degraded` with the column named — which is what that check is for.
+
 ## 1.1.0 — 30 August 2026
 
 Everything in this release was found by testing the deployed service rather
