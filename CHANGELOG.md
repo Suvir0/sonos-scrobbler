@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+**The security headers never reached a single page.** `assets.run_worker_first` listed
+only the API and callback paths, so every static page — including the dashboard, which
+carries a delete-everything button and a token field — was answered by the asset router
+before the Worker ran, with no Content-Security-Policy, no `frame-ancestors 'none'`, no
+HSTS and no `nosniff`. The test asserting the opposite passed the entire time: a test
+calls the Worker directly and never goes through the asset router at all. Now `true`, so
+every request runs the Worker, and `check-assets.mjs` asserts the flag rather than
+enumerating routes — which also deletes the route-coverage check it replaces.
+
+**Two accounts on one household stopped destroying each other.** `subscriptions.id` and
+`sonos_groups` were keyed by the Sonos id alone, so a household with two members — or,
+far more often, one person who returned without a session cookie and was handed a second
+account — had two accounts writing to the same rows. Asymmetrically: `subscriptions`
+kept whoever linked first because its upsert never touched `user_id`, while
+`sonos_groups` kept whoever synced last because its upsert did. The two tables then
+disagreed about who owned a room, and a dashboard could show healthy subscriptions above
+zero rooms while somebody else's account received the scrobbles. Both are keyed by user
+as of migration `0006`, the `GroupSession` object is named per user and group, and one
+event is now delivered to every subscriber, each isolated from the others' failures.
+Deleting an account no longer cancels a Sonos subscription another account still needs.
+
+**A sign-in link, so an account can be found again.** There is no password and no email
+here, and nothing Sonos returns identifies a person — only which speakers they can reach,
+which their household's other members can reach too. A cleared cookie therefore meant a
+new account, with the old one left holding a live Sonos grant and an encrypted Last.fm
+key its owner could no longer see, delete, or stop from scrobbling. Every account now has
+a private link it can be reached by: an HMAC for lookup, encrypted alongside so the page
+can show it back rather than offering one chance to copy it at signup.
+
+**Migrations apply themselves now.** `db:remote` was a shell loop over every `.sql` file
+that stopped on the first `duplicate column name`, which meant it could not be used to
+apply a *new* migration to a database that already had the earlier ones — the exact thing
+it existed for. It is `wrangler d1 migrations apply`, which tracks what it has applied and
+is a no-op when there is nothing new. `npm run db:adopt` marks `0001`–`0005` as applied on
+a database that predates the change; it is needed exactly once.
+
+**Fixed, in the front page.** Pressing Save on the ListenBrainz box with nothing in it
+replaced the whole app with a raw JSON error at a dead-end URL — the one endpoint reached
+by an ordinary form submission rather than by `fetch`, and the only one that answered with
+a JSON body instead of a redirect. A Last.fm or ListenBrainz credential rejected while the
+page was open said "reconnect needed" above no button, because the row's button had been
+hidden when it first connected and only the Sonos row knew how to bring one back. The
+rooms panel was drawn once and never again, so an account whose speakers were still being
+discovered when the first poll landed hid it permanently. The success banner read "lastfm
+connected." The Sonos row showed a Connect button under a banner saying Sonos had just
+connected. Rescan answered a button non-technical users are told to press with a JSON
+dump. `apple-touch-icon` pointed at an SVG, which iOS ignores.
+
 **Every route was unreachable from a browser.** With `not_found_handling` set, the
 Cloudflare asset router answers a navigation request that matches no file before the
 Worker runs, so "Connect Sonos", "Connect Last.fm", both OAuth callbacks and `/healthz`

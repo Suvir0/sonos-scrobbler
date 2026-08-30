@@ -22,16 +22,33 @@ credentials, anything that gets a credential into a log or an error page,
 anything that defeats the webhook signature check or the OAuth state, and
 anything that lets a request from another origin change an account.
 
+## The sign-in link
+
+Each account has a private link that signs a browser back in. It is a bearer
+credential in a URL, which is the trade every magic link makes: it exists
+because Sonos is the only identity here and cannot tell a returning person from
+a new one, so without it a cleared cookie stranded an account holding live
+credentials nobody could reach.
+
+What is done about the shape of it: the token is 32 random bytes; only its HMAC
+is used for lookup; using it redirects immediately, so the key does not sit in
+the address bar; and a link for a *different* account is refused outright when
+the browser is already signed in, so it cannot be used to move somebody quietly
+onto an attacker's account and collect what they type next. Making a new link
+invalidates the old one immediately.
+
+Anyone holding a valid link can sign in as that account. That is what it is for.
+
 ## Known and accepted
 
 These are documented rather than undiscovered — see **Known limits** in the
 README:
 
-- A signed-out reconnect creates a second account and strands the first. It is
-  the open item before public signups, not a finding.
+- A user who loses both their session cookie and their sign-in link cannot be
+  recovered. Matching on household id would fix it and is worse: a Sonos
+  household can have more than one member, so it would hand one person another
+  person's Last.fm session key.
 - The Sonos request budget is enforced per isolate rather than globally.
-- Two members of one Sonos household cannot both use the service; the second to
-  link takes over the first's subscriptions.
 
 ## Supported versions
 
