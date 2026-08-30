@@ -54,13 +54,22 @@ export async function setRoomScrobble(
   return (result.meta?.changes ?? 0) > 0;
 }
 
-/** The player ids recorded for a group, or undefined when the topology is unknown. */
+/**
+ * The player ids recorded for a group, or undefined when the topology is unknown.
+ *
+ * Scoped by user: since migration 0006 a group belongs to each account that can see it,
+ * and reading another member's row would answer this user's question with somebody
+ * else's speakers.
+ */
 export async function groupPlayerIds(
   env: Env,
+  userId: string,
   groupId: string
 ): Promise<string[] | undefined> {
-  const row = await env.DB.prepare('SELECT player_ids FROM sonos_groups WHERE group_id = ?')
-    .bind(groupId)
+  const row = await env.DB.prepare(
+    'SELECT player_ids FROM sonos_groups WHERE group_id = ? AND user_id = ?'
+  )
+    .bind(groupId, userId)
     .first<{ player_ids: string | null }>();
   if (!row?.player_ids) return undefined;
   try {
@@ -87,7 +96,7 @@ export async function groupMayScrobble(
   userId: string,
   groupId: string
 ): Promise<boolean> {
-  const playerIds = await groupPlayerIds(env, groupId);
+  const playerIds = await groupPlayerIds(env, userId, groupId);
   if (!playerIds) return true;
 
   const placeholders = playerIds.map(() => '?').join(', ');

@@ -126,13 +126,28 @@ describe('room preferences', () => {
 
     // The one that makes the setting worth having: another person's household cannot
     // switch off a room in yours, and their off room does not silence your group.
+    // The shape a household shared by two people actually has: one Sonos group, and a
+    // row for it under each account. The same speaker can be switched off by one of them
+    // and left on by the other, and neither answer may leak into the other's.
     it('only counts the asking user’s own rooms', async () => {
+      await addUser(OTHER);
+      await addPlayer(OTHER, 'RINCON_LIVING', 'Living Room');
+      await setRoomScrobble(env, OTHER, 'RINCON_LIVING', false);
+      await addGroup(USER, 'GROUP_LIVING', ['RINCON_LIVING']);
+      await addGroup(OTHER, 'GROUP_LIVING', ['RINCON_LIVING']);
+      expect(await groupMayScrobble(env, USER, 'GROUP_LIVING')).toBe(true);
+      expect(await groupMayScrobble(env, OTHER, 'GROUP_LIVING')).toBe(false);
+    });
+
+    // And a group one account has never recorded is unknown territory for that account,
+    // not a refusal: the same group id under somebody else's user id says nothing about
+    // this one's speakers.
+    it('does not read another user’s group membership', async () => {
       await addUser(OTHER);
       await addPlayer(OTHER, 'RINCON_LIVING', 'Their Living Room');
       await setRoomScrobble(env, OTHER, 'RINCON_LIVING', false);
-      await addGroup(USER, 'GROUP_LIVING', ['RINCON_LIVING']);
+      await addGroup(OTHER, 'GROUP_LIVING', ['RINCON_LIVING']);
       expect(await groupMayScrobble(env, USER, 'GROUP_LIVING')).toBe(true);
-      expect(await groupMayScrobble(env, OTHER, 'GROUP_LIVING')).toBe(false);
     });
   });
 });

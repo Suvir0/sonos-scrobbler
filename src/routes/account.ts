@@ -14,6 +14,8 @@ import { log } from '../lib/log.js';
 import { clientForUser } from '../sonos/account.js';
 import { listRooms } from '../rooms.js';
 import { syncHousehold } from '../subscriptions.js';
+import { groupSessionName } from '../do/group-session.js';
+import { currentRecoveryKey, issueRecoveryKey, recoveryUrl } from '../lib/recovery.js';
 
 export async function accountStatus(env: Env, userId: string): Promise<Response> {
   const [targets, households, groups] = await Promise.all([
@@ -76,7 +78,9 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
   // hops on every poll, for as long as a tab is open.
   const snapshots = await Promise.all(
     (groups.results ?? []).map(async (group) => {
-      const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(group.group_id));
+      const stub = env.GROUP_SESSIONS.get(
+        env.GROUP_SESSIONS.idFromName(groupSessionName(userId, group.group_id))
+      );
       return { group, snapshot: await stub.snapshot().catch(() => undefined) };
     })
   );
@@ -119,6 +123,40 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
   });
 }
 
+/** Whether some other account still subscribes to this household or group. */
+async function sharedWithAnotherUser(
+  env: Env,
+  userId: string,
+  scope: 'household' | 'group',
+  targetId: string
+): Promise<boolean> {
+  const row = await env.DB.prepare(
+    'SELECT 1 AS present FROM subscriptions WHERE scope = ? AND target_id = ? AND user_id != ? LIMIT 1'
+  )
+    .bind(scope, targetId, userId)
+    .first<{ present: number }>();
+  return row !== null;
+}
+
+/**
+ * This account's sign-in link.
+ *
+ * Its own endpoint rather than a field on `/api/account`, because that one is polled
+ * every fifteen seconds and a bearer credential does not belong in a response repeated
+ * four times a minute for as long as a tab is open. This is read once, when the page
+ * draws the panel that shows it.
+ */
+export async function getRecoveryLink(env: Env, userId: string): Promise<Response> {
+  return json({ url: recoveryUrl(env, await currentRecoveryKey(env, userId)) });
+}
+
+/** Replaces the link. The previous one stops working immediately. */
+export async function rotateRecoveryLink(env: Env, userId: string): Promise<Response> {
+  const url = recoveryUrl(env, await issueRecoveryKey(env, userId));
+  log(env, 'info', 'recovery.rotated');
+  return json({ url });
+}
+
 export async function deleteAccount(env: Env, userId: string): Promise<Response> {
   // 1. Stop Sonos sending us anything more. Best effort: a revoked grant cannot be
   //    unsubscribed from, and that must not block the rest of the deletion.
@@ -133,10 +171,18 @@ export async function deleteAccount(env: Env, userId: string): Promise<Response>
       .bind(userId)
       .all<{ group_id: string }>();
 
+    // Only for targets nobody else is still listening to.
+    //
+    // Sonos has one subscription per application per target, not one per user of this
+    // service, so cancelling it cancels it for every account that shares the household.
+    // Without this check, one member of a household deleting their account would stop
+    // the other's scrobbling dead, with nothing on their page to say why.
     for (const row of households.results ?? []) {
+      if (await sharedWithAnotherUser(env, userId, 'household', row.household_id)) continue;
       await client.unsubscribeGroups(row.household_id).catch(() => undefined);
     }
     for (const row of groups.results ?? []) {
+      if (await sharedWithAnotherUser(env, userId, 'group', row.group_id)) continue;
       await client.unsubscribePlayback(row.group_id).catch(() => undefined);
       await client.unsubscribePlaybackMetadata(row.group_id).catch(() => undefined);
     }
@@ -153,7 +199,9 @@ export async function deleteAccount(env: Env, userId: string): Promise<Response>
     .bind(userId)
     .all<{ group_id: string }>();
   for (const row of groups.results ?? []) {
-    const stub = env.GROUP_SESSIONS.get(env.GROUP_SESSIONS.idFromName(row.group_id));
+    const stub = env.GROUP_SESSIONS.get(
+      env.GROUP_SESSIONS.idFromName(groupSessionName(userId, row.group_id))
+    );
     await stub.reset().catch(() => undefined);
   }
   await env.USER_QUEUES.get(env.USER_QUEUES.idFromName(userId))

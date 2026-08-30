@@ -9,11 +9,18 @@ import type { Env } from './env.js';
 import { harden, isSameOrigin, problem, redirect } from './lib/http.js';
 import { log } from './lib/log.js';
 import { clearedCookie, currentUserId, destroySession } from './lib/session.js';
-import { accountStatus, deleteAccount, resync } from './routes/account.js';
+import {
+  accountStatus,
+  deleteAccount,
+  getRecoveryLink,
+  resync,
+  rotateRecoveryLink
+} from './routes/account.js';
 import {
   completeLastfmLink,
   completeSonosLink,
   linkListenBrainz,
+  recoverSession,
   startLastfmLink,
   startSonosLink
 } from './routes/auth.js';
@@ -82,6 +89,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     return user instanceof Response ? user : await linkListenBrainz(request, env, user);
   }
 
+  // No session required: this is what somebody uses precisely because they have none.
+  if (path === '/auth/recover') return await recoverSession(request, env);
+
   if (path === '/auth/logout' && method === 'POST') {
     await destroySession(request, env);
     return redirect('/', { 'set-cookie': clearedCookie(env) });
@@ -106,6 +116,15 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (path === '/api/rooms' && (method === 'PUT' || method === 'POST')) {
     const user = await requireUser(request, env);
     return user instanceof Response ? user : await updateRoom(request, env, user);
+  }
+
+  if (path === '/api/recovery' && method === 'GET') {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : await getRecoveryLink(env, user);
+  }
+  if (path === '/api/recovery' && method === 'POST') {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : await rotateRecoveryLink(env, user);
   }
 
   if (path === '/api/settings' && method === 'GET') {

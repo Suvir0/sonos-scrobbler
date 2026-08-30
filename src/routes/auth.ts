@@ -15,8 +15,9 @@
 
 import type { Env } from '../env.js';
 import { encryptSecret, randomToken, sha256Hex } from '../lib/crypto.js';
-import { problem, redirect } from '../lib/http.js';
+import { redirect } from '../lib/http.js';
 import { log } from '../lib/log.js';
+import { currentRecoveryKey, userForRecoveryKey } from '../lib/recovery.js';
 import { createSession, currentUserId, sessionCookie } from '../lib/session.js';
 import { LastfmClient } from '../scrobble/lastfm-client.js';
 import { ListenBrainzClient } from '../scrobble/listenbrainz-client.js';
@@ -79,6 +80,10 @@ export async function completeSonosLink(
     .bind(userId, now)
     .run();
   await saveTokens(env, userId, tokens);
+  // Every account gets a sign-in link straight away, so the page always has one to show.
+  // Minting it lazily would mean the one moment somebody needs it — after their cookie
+  // is already gone — is the one moment they cannot ask for it.
+  await currentRecoveryKey(env, userId);
 
   // Discovering households and subscribing takes several API calls; none of it needs
   // to happen before the user sees the page.
@@ -108,6 +113,40 @@ async function linkHouseholds(env: Env, userId: string): Promise<void> {
     await syncHousehold(env, userId, household.id, client, now);
   }
   log(env, 'info', 'sonos.link.complete', { households: households.length });
+}
+
+/**
+ * Signs somebody back in from their saved link.
+ *
+ * A GET, deliberately: this is a link a person keeps in a note or a bookmark, and it has
+ * to work by being clicked. That makes it a bearer credential in a URL, which is the
+ * same trade every magic link makes — mitigated by handing out a session cookie and
+ * redirecting immediately, so the key does not sit in the address bar afterwards.
+ */
+export async function recoverSession(request: Request, env: Env): Promise<Response> {
+  const key = new URL(request.url).searchParams.get('key') ?? '';
+  const userId = await userForRecoveryKey(env, key);
+  if (!userId) {
+    log(env, 'warn', 'recovery.rejected');
+    return redirect('/?error=recover_failed');
+  }
+
+  // Refuse to swap one signed-in account for another without saying so.
+  //
+  // A GET that mints a session is a login-CSRF primitive: anyone who can get a browser
+  // to load a URL can sign that browser into an account they control. On a page whose
+  // whole purpose is collecting a ListenBrainz token, somebody silently moved onto an
+  // attacker's account would paste their credential into it. Signing out first is a
+  // small price, and it is the only moment this can be noticed.
+  const signedIn = await currentUserId(request, env);
+  if (signedIn && signedIn !== userId) {
+    log(env, 'warn', 'recovery.refused-account-switch');
+    return redirect('/?error=recover_signed_in');
+  }
+
+  const token = await createSession(env, userId);
+  log(env, 'info', 'recovery.used');
+  return redirect('/?recovered=1', { 'set-cookie': sessionCookie(token, env) });
 }
 
 /* ------------------------------------------------------------------ last.fm */
@@ -154,7 +193,11 @@ export async function linkListenBrainz(
 ): Promise<Response> {
   const form = await request.formData().catch(() => undefined);
   const token = String(form?.get('token') ?? '').trim();
-  if (!token) return problem(400, 'missing_token', 'Paste the token from your settings page.');
+  // A redirect, not a JSON problem. This is the one endpoint a browser reaches by
+  // submitting an ordinary HTML form rather than through `fetch`, so a JSON body is not
+  // an error the page can display — it is a blank white screen with `{"error":...}` on
+  // it, at a URL with no way back. Every other outcome of this flow already redirects.
+  if (!token) return redirect('/?error=listenbrainz_missing');
 
   const client = new ListenBrainzClient({ endpoint: env.LISTENBRAINZ_API_URL });
   try {
@@ -198,4 +241,15 @@ async function saveTarget(
       now
     )
     .run();
+
+  // Send whatever was waiting on this credential.
+  //
+  // A queue that hit `reauthorize` deliberately stops retrying and sets no alarm, so
+  // nothing else would ever come back for those plays — the next flush only happens when
+  // some future track is enqueued. Without this, reconnecting reports success and the
+  // plays missed while the credential was dead stay missed until the user happens to
+  // listen to something else. Best effort: a link must not fail because a flush did.
+  await env.USER_QUEUES.get(env.USER_QUEUES.idFromName(userId))
+    .flush()
+    .catch(() => undefined);
 }
