@@ -104,14 +104,43 @@ describe('room preferences', () => {
     // the membership column existed. Refusing these would stop scrobbling for a reason
     // no user could see or fix, and an unrecorded group has no switched-off room in it
     // by definition.
-    it('permits a group whose membership is unknown', async () => {
+    // A user who has never touched a switch cannot be stopped by this rule, whatever
+    // the topology looks like. That is the case the original "unknown means yes"
+    // reasoning was protecting, and it is kept exactly.
+    it('permits a group whose membership is unknown when nothing is switched off', async () => {
       await addGroup(USER, 'GROUP_NEW', null);
-      await setRoomScrobble(env, USER, 'RINCON_LIVING', false);
       expect(await groupMayScrobble(env, USER, 'GROUP_NEW')).toBe(true);
     });
 
     it('permits a group it has never heard of at all', async () => {
       expect(await groupMayScrobble(env, USER, 'GROUP_ABSENT')).toBe(true);
+    });
+
+    // But once a choice has been made, an unresolvable group must not be waved through.
+    // Production had every group carrying a null membership and two rooms switched off,
+    // and both scrobbled anyway — a setting somebody actually changed, silently ignored.
+    it('refuses an unresolvable group once any room has been switched off', async () => {
+      await addGroup(USER, 'GROUP_NEW', null);
+      await setRoomScrobble(env, USER, 'RINCON_LIVING', false);
+      expect(await groupMayScrobble(env, USER, 'GROUP_NEW')).toBe(false);
+      expect(await groupMayScrobble(env, USER, 'GROUP_ABSENT')).toBe(false);
+    });
+
+    // And switching that room back on releases them again, with no resync needed.
+    it('permits them again once every room is back on', async () => {
+      await addGroup(USER, 'GROUP_NEW', null);
+      await setRoomScrobble(env, USER, 'RINCON_LIVING', false);
+      await setRoomScrobble(env, USER, 'RINCON_LIVING', true);
+      expect(await groupMayScrobble(env, USER, 'GROUP_NEW')).toBe(true);
+    });
+
+    // One person's switch must not hold another person's unresolvable group.
+    it('only counts the asking user’s own switches when membership is unknown', async () => {
+      await addUser(OTHER);
+      await addPlayer(OTHER, 'RINCON_THEIRS', 'Their Room');
+      await setRoomScrobble(env, OTHER, 'RINCON_THEIRS', false);
+      await addGroup(USER, 'GROUP_NEW', null);
+      expect(await groupMayScrobble(env, USER, 'GROUP_NEW')).toBe(true);
     });
 
     it('permits a group whose membership column is not valid JSON', async () => {

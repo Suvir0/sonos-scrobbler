@@ -61,6 +61,19 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
   // now-playing panel is keyed on.
   const speakers = await listRooms(env, userId);
 
+  // Groups whose membership we could not resolve. On its own that is harmless, but a
+  // user who has switched a room off and has an unresolved group is one whose choice
+  // cannot currently be applied — `groupMayScrobble` refuses those rather than
+  // scrobbling a room somebody turned off. Saying so is what stops that reading as the
+  // service having quietly stopped working.
+  const unresolved = await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM sonos_groups WHERE user_id = ? AND player_ids IS NULL'
+  )
+    .bind(userId)
+    .first<{ n: number }>();
+  const roomsNeedRescan =
+    (unresolved?.n ?? 0) > 0 && speakers.some((room) => !room.scrobble);
+
   // Whether the Sonos grant itself is still good. Last.fm and ListenBrainz each report
   // this; the connection without which nothing works at all did not, so a revoked grant
   // looked identical to a quiet house.
@@ -115,6 +128,7 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       failing: subs?.failing ?? 0,
       lastError: subs?.last_error ?? null
     },
+    roomsNeedRescan,
     // The two timestamps that separate a healthy quiet service from a broken one.
     lastEventAt: subs?.last_event_at ?? null,
     lastScrobbleAt: user?.last_scrobble_at ?? null,
