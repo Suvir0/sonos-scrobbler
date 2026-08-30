@@ -11,7 +11,7 @@
 export const APP_NAME = 'Scrobbler for Sonos';
 
 /** Kept in step with package.json by hand; it appears only in the User-Agent. */
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 export const APP_URL = 'https://scrobbler.suvir.net';
 

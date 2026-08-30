@@ -454,7 +454,7 @@ on the config instead.
 npm install && npm test
 ```
 
-257 tests across 14 files, all against the real Durable Object and D1 implementations via
+263 tests across 14 files, all against the real Durable Object and D1 implementations via
 `@cloudflare/vitest-pool-workers` rather than mocks of them.
 
 ```bash
@@ -522,25 +522,37 @@ method is refused unless its `Origin` is this site, on top of the `SameSite=Lax`
 
 ## Before opening signups
 
-- [ ] `npm test`, `npm run type-check` and `npm run check:assets` clean.
-- [ ] `npm run db:adopt` run **once** if the production database predates tracked
-      migrations, then `npm run db:remote` reports no migrations to apply.
-- [ ] All seven secrets set (`wrangler secret list`), and `GET /healthz` returns `ok` —
-      not just 200, the body's `status`.
-- [ ] Sonos portal: redirect URI and Event Callback URL both point at the deployed
-      origin, exactly. A trailing slash difference fails the OAuth exchange.
-- [ ] Last.fm portal: callback URL matches, homepage set.
-- [ ] Link a real account end to end, play a track, and confirm **Last scrobble** moves
-      on the status page. A green tick with `never` next to it means the pipeline is
-      not connected.
-- [ ] Confirm the sign-in link works from a browser with no cookies at all — a private
-      window is enough. It is the only route back into an account.
+Verified for 1.1.0:
+
+- [x] `npm test` (263), `npm run type-check` and `npm run check:assets` clean.
+- [x] `npm run db:adopt` run once, `npm run db:remote` reports no migrations to apply.
+- [x] All seven secrets set, and `GET /healthz` returns `ok` in the body — including
+      `checks.schema`, which names any column the deployed code needs and D1 lacks.
+- [x] Sonos portal reaches us: real `playback` and `playbackMetadata` events observed
+      arriving and being dispatched to every subscriber.
+- [x] Last.fm and ListenBrainz both accept a now-playing update from a real account.
+- [x] A real track played on a real speaker crossed its threshold and was queued —
+      observed live, and the reason **Last scrobble** stayed at `never` through it is
+      fixed in this release rather than explained away.
+- [x] The security headers reach the page itself, not just the API:
+      `curl -sI https://scrobbler.suvir.net/ | grep -i content-security-policy`.
+
+Still to do, and none of it is code:
+
 - [ ] Point an uptime check at `/healthz` that alerts on the body's `status`, not just
-      on a 200, and add a Cloudflare notification on Worker error rate.
+      on a 200, and add a Cloudflare notification on Worker error rate. Nothing pages
+      anybody today.
+- [ ] Turn Web Analytics / Browser Insights **off** for this zone. Cloudflare injects
+      `static.cloudflareinsights.com/beacon.min.js` at the edge; the CSP blocks it, so
+      the colophon's "no analytics" claim holds — but the page should not be trying.
 - [ ] Confirm the zero-retention design with Sonos developer support before opening
-      signups — the legal notes above are why.
-- [ ] `TOKEN_ENCRYPTION_KEY` is backed up somewhere you will still have it in a year.
+      signups. This is the real gate on *public* release, and the legal notes above
+      are why.
+- [ ] `TOKEN_ENCRYPTION_KEY` backed up somewhere you will still have it in a year.
       Rotating it locks every existing user out permanently.
+- [ ] Confirm the sign-in link works from a browser with no cookies — a private window
+      is enough. Exercised in tests and locally end to end; worth doing once on the
+      deployed origin, since it is the only route back into an account.
 
 ## Known limits, and why they are limits
 

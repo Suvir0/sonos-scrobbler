@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 30 August 2026
+
+Everything in this release was found by testing the deployed service rather
+than the test suite. Three of these were wrong in production while a passing
+test reported them fine.
+
+**A working scrobble reported itself as no scrobble at all.** `last_scrobble_at`
+and the `scrobble.enqueued` log lived in the webhook handler, so they only fired
+for a play earned by an incoming event. Sonos sends nothing while a track plays
+normally — the premise the anchored clock exists for — so the threshold is
+almost always crossed by the Durable Object's own alarm, which never reaches
+that handler. The status page therefore read "Last scrobble: never" over a
+pipeline delivering plays correctly, which is the one reading the README tells
+an operator to trust. Both now live in `GroupSession.enqueue`, the single place
+every earned play passes through.
+
+**A room switched off was scrobbling anyway.** `groupMayScrobble` permitted
+unknown group membership unconditionally. That is right for a group just
+created and wrong when the membership was simply never recorded — which is what
+production looked like: every group carrying a null `player_ids`, two rooms
+switched off, both scrobbling. Unknown membership is now permitted only for a
+user who has switched nothing off, and `/api/account` reports the condition so
+the page says a rescan is needed rather than going quiet.
 
 **The security headers never reached a single page.** `assets.run_worker_first` listed
 only the API and callback paths, so every static page — including the dashboard, which
