@@ -20,18 +20,18 @@
 
         <h1>Privacy</h1>
         <p class="lede">
-          This service exists to move a play from your speaker to your own Last.fm and
-          ListenBrainz accounts. It is built so that it cannot become a second copy of your
-          listening history.
+          This service moves a play from your speaker to your own Last.fm and ListenBrainz
+          accounts. It is built so that it cannot become a second copy of your listening
+          history.
         </p>
 
         <h2>What is never stored</h2>
         <p>
-          <strong>No listening history.</strong> There is no table of what you played, and that
-          is a structural property rather than a policy: the database schema has no
-          <code>scrobbles</code>, <code>history</code> or <code>plays</code> table, and the
-          migration that creates it says so in a comment. A track exists in this service only
-          while it is playing and until Last.fm or ListenBrainz accepts it. Then it is gone.
+          <strong>No listening history.</strong> There is no table of what you played. That is
+          the schema rather than a policy: there is no <code>scrobbles</code>,
+          <code>history</code> or <code>plays</code> table, and the migration that creates the
+          database says so in a comment. A track exists in this service only while it is
+          playing and until Last.fm or ListenBrainz accepts it. Then it is gone.
         </p>
         <p>
           Logs do not contain track, artist or album names either. The logger drops any field
@@ -51,13 +51,13 @@
             account is connected.
           </li>
           <li>
-            <strong>Your household, group and room names</strong> — your own labels for your
-            hardware. The status page is unusable without them.
+            <strong>Your household, group and room names</strong>, which are your own labels
+            for your hardware. The status page is unusable without them.
           </li>
           <li>
             <strong>Subscription bookkeeping and four timestamps</strong>: when a subscription
             renews, when the last Sonos event arrived, when the last scrobble was submitted, and
-            when your account was created. Timestamps only — no titles.
+            when your account was created. Timestamps only, and no titles.
           </li>
           <li>
             <strong>A login session</strong>: your browser holds a random token, and the
@@ -73,17 +73,17 @@
         <h2>Who it is shared with</h2>
         <p>
           Only the services you connected. Plays go to Last.fm and ListenBrainz because that is
-          what you asked for. Nothing is sold, and there is no analytics, no advertising and no
-          third-party script on any page here — the content security policy this site sends
-          forbids loading one. The two typefaces are served from this domain rather than from
-          a font CDN, because a webfont request carries your IP address and the page you are
-          reading to whoever serves it.
+          what you asked for. Nothing is sold, and no page here loads analytics, advertising
+          or any third-party script. The content security policy this site sends forbids
+          loading one. The two typefaces are served from this domain rather than from a font
+          CDN, because a webfont request carries your IP address and the page you are reading
+          to whoever serves it.
         </p>
 
         <h2>Deleting everything</h2>
         <p>
           The <strong>Delete everything</strong> button on the front page unsubscribes from
-          Sonos, wipes the durable storage holding anything in flight, and deletes your row —
+          Sonos, wipes the durable storage holding anything in flight, and deletes your row,
           which every other table cascades from. It is immediate and there is no soft-delete
           copy. Revoking this integration in your Sonos account stops new events regardless.
         </p>
@@ -92,7 +92,7 @@
         <p>
           Questions about your data go to <a href="mailto:hello@suvir.net">hello@suvir.net</a>.
           Anything that could expose somebody's credentials should go there too rather than to
-          a public issue — the <a href="/colophon">colophon</a> has the security policy.
+          a public issue. The <a href="/colophon">colophon</a> has the security policy.
         </p>
         <p>
           Every claim on this page is checkable: the service is open source under the MIT

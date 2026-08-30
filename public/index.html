@@ -6,7 +6,7 @@
     <title>Scrobbler for Sonos</title>
     <meta
       name="description"
-      content="Every play, every speaker, straight to your Last.fm and ListenBrainz. Nothing to install, nothing running at home, no history kept here."
+      content="Sends whatever your Sonos plays to your own Last.fm and ListenBrainz accounts. You install nothing, you run nothing at home, and this service keeps no history of its own."
     />
     <meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#14120d" media="(prefers-color-scheme: dark)" />
@@ -14,7 +14,7 @@
     <meta property="og:title" content="Scrobbler for Sonos" />
     <meta
       property="og:description"
-      content="Every play, every speaker, straight to your Last.fm and ListenBrainz. Nothing to install, nothing running at home."
+      content="Sends whatever your Sonos plays to your own Last.fm and ListenBrainz accounts. You install nothing and you run nothing at home."
     />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
@@ -49,10 +49,11 @@
 
       <section class="hero">
         <div id="hero-pitch">
-          <h1>Every play.<br />Every speaker.<br />Your Last.fm.</h1>
+          <h1>Your Sonos plays it.<br />Your Last.fm gets it.</h1>
           <p class="pitch">
-            Alarms, voice assistants, the button on the speaker — if your Sonos plays it, it
-            scrobbles. Nothing to install, nothing running at home, no history kept here.
+            Alarms, voice assistants, somebody pressing play on the speaker itself: if your
+            Sonos plays it, it scrobbles. You install nothing, you run nothing at home, and
+            this service keeps no history of what you listened to.
           </p>
         </div>
 
@@ -82,14 +83,14 @@
       <div class="rows">
         <div class="row primary" id="step-sonos">
           <span class="name" data-connected="Sonos">Connect Sonos</span>
-          <span class="why">Reads what's playing. Never controls your speakers.</span>
+          <span class="why">It reads what's playing. It never controls your speakers.</span>
           <a class="btn solid" href="/auth/sonos/start">Connect →</a>
           <span class="state" hidden></span>
         </div>
 
         <div class="row" id="step-lastfm">
           <span class="name" data-connected="Last.fm">Connect Last.fm</span>
-          <span class="why">Optional if you only use ListenBrainz.</span>
+          <span class="why">You can skip this if you only use ListenBrainz.</span>
           <a class="btn" href="/auth/lastfm/start">Connect</a>
           <span class="state" hidden></span>
         </div>
@@ -146,8 +147,8 @@
 
       <footer>
         <p>
-          <strong>We keep no listening history.</strong> A track exists here only while it plays,
-          then it's yours on Last.fm and ListenBrainz — read it back there.
+          <strong>We keep no listening history.</strong> A track exists here only while it plays.
+          After that it lives on Last.fm and ListenBrainz, which is where you read it back.
         </p>
 
         <details id="account" hidden>
@@ -305,7 +306,7 @@
           // Artist and album on one line, as the design has it; the album is dropped
           // rather than shown as a dangling dash when the source did not report one.
           $('np-by').textContent = first.album
-            ? `${first.artist} — ${first.album}`
+            ? `${first.artist} · ${first.album}`
             : first.artist;
 
           // Every other room the service is watching, on one mono line: what else is
@@ -348,18 +349,18 @@
         // it, and until it is reconnected the rest of the status describes a pipeline
         // that cannot receive anything.
         if (data.sonos?.needsReauth) {
-          needsAttention('step-sonos', 'Sonos revoked this connection — reconnect');
+          needsAttention('step-sonos', 'Sonos revoked this connection. Reconnect it.');
           const action = $('step-sonos').querySelector('.btn');
           if (action) action.hidden = false;
         } else if (data.households?.length) {
           const count = data.rooms.length;
-          connected('step-sonos', `Connected — ${count} room${count === 1 ? '' : 's'}`);
+          connected('step-sonos', `Connected, ${count} room${count === 1 ? '' : 's'}`);
         }
 
         for (const target of data.targets ?? []) {
           const id = target.kind === 'lastfm' ? 'step-lastfm' : 'step-listenbrainz';
           if (target.needsReauth) {
-            needsAttention(id, 'Reconnect needed — credentials rejected');
+            needsAttention(id, 'Reconnect needed: the credentials were rejected');
           } else {
             connected(id, `Connected as ${target.username ?? 'you'}`);
           }
@@ -401,7 +402,7 @@
         } else if (subs.failing > 0) {
           warning.hidden = false;
           warning.textContent =
-            `${subs.failing} of ${subs.total} subscriptions are failing to renew — those ` +
+            `${subs.failing} of ${subs.total} subscriptions are failing to renew, so those ` +
             'rooms may stop scrobbling. Open Account below and press Rescan rooms. ' +
             (subs.lastError ? `Last error: ${subs.lastError}` : '');
         } else if (subs.total > 0 && data.lastEventAt && Date.now() - data.lastEventAt > 86_400_000) {

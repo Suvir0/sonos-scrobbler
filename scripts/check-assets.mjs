@@ -10,8 +10,11 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, posix, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../public/', import.meta.url).pathname;
+// fileURLToPath, not .pathname: a checkout in a directory whose name contains a space
+// comes back percent-encoded from .pathname and every read then misses.
+const ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const problems = [];
 
 function walk(dir) {
@@ -85,6 +88,37 @@ for (const sheet of files.filter((file) => file.endsWith('.css'))) {
 // The licences the OFL requires to travel with the fonts.
 for (const required of ['/fonts/Archivo-OFL.txt', '/fonts/IBMPlexMono-OFL.txt']) {
   if (!present.has(required)) problems.push(`${required} is missing; the OFL requires it to ship`);
+}
+
+/**
+ * Every path the Worker routes must also be listed in `assets.run_worker_first`.
+ *
+ * With `not_found_handling` set, the asset router answers navigation requests before the
+ * Worker runs, so an unlisted route serves the 404 page to a browser while still working
+ * from curl and from `fetch()`. Nothing else catches that: unit tests call the Worker
+ * directly and never go through the asset router at all.
+ */
+const worker = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+// Enough of a JSONC reader for a file we control: strip line comments, then parse.
+const config = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
+const first = JSON.parse(config.replace(/^\s*\/\/.*$/gm, '')).assets?.run_worker_first ?? [];
+
+const routed = new Set();
+for (const [, path] of worker.matchAll(/path (?:===|\.startsWith\()\s*'(\/[^']*)'/g)) {
+  routed.add(path);
+}
+if (routed.size === 0) problems.push('src/index.ts: no routes found; this check has gone stale');
+
+for (const path of [...routed].sort()) {
+  const covered = first.some((pattern) =>
+    pattern.endsWith('*') ? path.startsWith(pattern.slice(0, -1)) : pattern === path
+  );
+  if (!covered) {
+    problems.push(
+      `wrangler.jsonc: ${path} is routed by the Worker but missing from ` +
+        'assets.run_worker_first, so a browser navigating to it gets the 404 page'
+    );
+  }
 }
 
 if (problems.length) {
