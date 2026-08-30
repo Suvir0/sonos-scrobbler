@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classify, looksLikeHandoff, parseStreamInfo } from './classify.js';
+import { classify, looksLikeHandoff, MAX_SONG_MS, parseStreamInfo } from './classify.js';
 import type { MetadataStatus } from './types.js';
 
 /** A normal music track from a named service, the overwhelmingly common case. */
@@ -70,6 +70,77 @@ describe('classify', () => {
       }
     };
     expect(classify(status)).toEqual({ scrobbleable: false, reason: 'not-music' });
+  });
+
+  describe('the song-length ceiling', () => {
+    // A DJ set, a mix, a film soundtrack as one item: things that reach a speaker
+    // wearing a title and an artist but are not a song.
+    it('declines a track longer than the ceiling', () => {
+      const status = musicTrack({
+        currentItem: {
+          track: {
+            type: 'track',
+            name: 'Essential Mix 2019-06-15',
+            artist: { name: 'Some DJ' },
+            service: { name: 'Acme Music' },
+            durationMillis: 2 * 60 * 60_000
+          }
+        }
+      });
+      expect(classify(status, { maxTrackMs: MAX_SONG_MS })).toEqual({
+        scrobbleable: false,
+        reason: 'too-long'
+      });
+    });
+
+    it('accepts a track exactly at the ceiling', () => {
+      const status = musicTrack({
+        currentItem: {
+          track: {
+            type: 'track',
+            name: 'Echoes',
+            artist: { name: 'Pink Floyd' },
+            service: { name: 'Acme Music' },
+            durationMillis: MAX_SONG_MS
+          }
+        }
+      });
+      expect(classify(status, { maxTrackMs: MAX_SONG_MS })).toMatchObject({ scrobbleable: true });
+    });
+
+    // The setting exists so somebody who genuinely listens to hour-long sets can have
+    // them. No ceiling passed means no ceiling applied.
+    it('applies no ceiling when none is given', () => {
+      const status = musicTrack({
+        currentItem: {
+          track: {
+            type: 'track',
+            name: 'Essential Mix 2019-06-15',
+            artist: { name: 'Some DJ' },
+            service: { name: 'Acme Music' },
+            durationMillis: 2 * 60 * 60_000
+          }
+        }
+      });
+      expect(classify(status)).toMatchObject({ scrobbleable: true });
+    });
+
+    // Radio reports the stream's length, not the song's, and `trackCandidate` drops it
+    // for exactly that reason. A station that has been up for six hours must not be
+    // refused as a long song.
+    it('never applies the ceiling to radio', () => {
+      const status: MetadataStatus = {
+        container: { name: 'BBC Radio 6', type: 'station.broadcast' },
+        currentItem: {
+          track: {
+            name: 'Come Down',
+            artist: { name: 'Anderson .Paak' },
+            durationMillis: 6 * 60 * 60_000
+          }
+        }
+      };
+      expect(classify(status, { maxTrackMs: MAX_SONG_MS })).toMatchObject({ scrobbleable: true });
+    });
   });
 
   it('declines when nothing is loaded', () => {

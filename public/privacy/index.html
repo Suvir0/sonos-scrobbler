@@ -52,7 +52,9 @@
           </li>
           <li>
             <strong>Your household, group and room names</strong>, which are your own labels
-            for your hardware. The status page is unusable without them.
+            for your hardware, and which speakers are currently grouped together. The status
+            page is unusable without them, and the room switches on the front page need them
+            to work out which speakers an event belongs to.
           </li>
           <li>
             <strong>Subscription bookkeeping and four timestamps</strong>: when a subscription
@@ -67,6 +69,12 @@
           <li>
             <strong>A hashed dedupe key per queued play</strong>, so the same track is not
             submitted twice. It is an HMAC, not a title, and it is discarded with the play.
+          </li>
+          <li>
+            <strong>Your own choices</strong>: which rooms may scrobble, and whether to
+            accept radio, playback cast from an app, and tracks longer than twenty minutes.
+            Three switches, plus one flag per speaker. A room switched off stays switched off
+            even if that speaker leaves the network and comes back.
           </li>
         </ul>
 

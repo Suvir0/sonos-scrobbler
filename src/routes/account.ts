@@ -12,6 +12,7 @@ import type { Env } from '../env.js';
 import { json } from '../lib/http.js';
 import { log } from '../lib/log.js';
 import { clientForUser } from '../sonos/account.js';
+import { listRooms } from '../rooms.js';
 import { syncHousehold } from '../subscriptions.js';
 
 export async function accountStatus(env: Env, userId: string): Promise<Response> {
@@ -52,6 +53,11 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
   const user = await env.DB.prepare('SELECT last_scrobble_at FROM users WHERE id = ?')
     .bind(userId)
     .first<{ last_scrobble_at: number | null }>();
+
+  // The speakers themselves, each with whether it is allowed to scrobble. Distinct
+  // from `rooms` below, which is the list of current *groups* and is what the
+  // now-playing panel is keyed on.
+  const speakers = await listRooms(env, userId);
 
   // Whether the Sonos grant itself is still good. Last.fm and ListenBrainz each report
   // this; the connection without which nothing works at all did not, so a revoked grant
@@ -98,6 +104,7 @@ export async function accountStatus(env: Env, userId: string): Promise<Response>
       name: row.name
     })),
     rooms: (groups.results ?? []).map((row) => row.name ?? row.group_id),
+    speakers,
     sonos: { connected: sonos !== null, needsReauth: (sonos?.needs_reauth ?? 0) === 1 },
     subscriptions: {
       total: subs?.total ?? 0,

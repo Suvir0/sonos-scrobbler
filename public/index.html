@@ -122,7 +122,7 @@
       <h2 class="section" id="settings-heading" hidden>What gets scrobbled</h2>
       <div class="rows" id="settings" hidden>
         <label class="toggle">
-          <input type="checkbox" id="set-radio" />
+          <input type="checkbox" id="set-radio" data-setting="scrobbleRadio" />
           <span>
             <span class="name">Radio and streams</span>
             <span class="why"
@@ -133,17 +133,34 @@
           </span>
         </label>
         <label class="toggle">
-          <input type="checkbox" id="set-handoff" />
+          <input type="checkbox" id="set-handoff" data-setting="allowHandoff" />
           <span>
             <span class="name">Music cast from an app</span>
             <span class="why"
-              >AirPlay, Spotify Connect and similar hand playback to the speaker. Their own
-              apps usually scrobble these already, so leaving this off avoids duplicates.</span
+              >AirPlay, Spotify Connect and similar hand playback to the speaker. This is how
+              a YouTube video usually reaches a Sonos, and nothing in what the speaker
+              reports tells a video apart from a song. Their own apps usually scrobble real
+              music already, so leaving this off avoids duplicates as well.</span
+            >
+          </span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="set-long" data-setting="skipLongTracks" />
+          <span>
+            <span class="name">Skip anything longer than 20 minutes</span>
+            <span class="why"
+              >A DJ set, a mix, a film soundtrack as one file or a sleep recording arrives
+              with a title and an artist like any song. Almost nothing this long is one.
+              Turn this off if you want hour-long sets in your history.</span
             >
           </span>
         </label>
         <p class="note" id="settings-note" role="status" hidden></p>
       </div>
+
+      <h2 class="section" id="rooms-heading" hidden>Which rooms scrobble</h2>
+      <div class="rows" id="rooms" hidden></div>
+      <p class="note" id="rooms-note" role="status" hidden></p>
 
       <footer>
         <p>
@@ -246,9 +263,36 @@
 
       /* ----------------------------------------------------------------- settings */
 
-      const radioBox = $('set-radio');
-      const handoffBox = $('set-handoff');
+      const settingBoxes = [...document.querySelectorAll('#settings input[data-setting]')];
       const settingsNote = $('settings-note');
+
+      /**
+       * Saves one checkbox, and puts it back if the save failed.
+       *
+       * A toggle that stays flipped after a failed request is a lie about what the
+       * service will do, which is worse than the failure itself.
+       */
+      async function save(box, url, body, note) {
+        note.hidden = false;
+        note.className = 'note';
+        note.textContent = 'Saving…';
+        try {
+          const response = await fetch(url, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          note.className = 'note ok';
+          note.textContent = 'Saved. Takes effect on the next track.';
+          return true;
+        } catch {
+          box.checked = !box.checked;
+          note.className = 'note warn';
+          note.textContent = 'Could not save that. Please try again.';
+          return false;
+        }
+      }
 
       // Read once when the session is first seen, not on every poll: nothing else
       // changes these, and re-reading every fifteen seconds would fight a checkbox
@@ -257,37 +301,80 @@
         const response = await fetch('/api/settings');
         if (!response.ok) return;
         const data = await response.json();
-        radioBox.checked = data.scrobbleRadio;
-        handoffBox.checked = data.allowHandoff;
+        for (const box of settingBoxes) box.checked = Boolean(data[box.dataset.setting]);
       }
 
-      async function saveSettings(event) {
-        const box = event.currentTarget;
-        const body =
-          box === radioBox ? { scrobbleRadio: box.checked } : { allowHandoff: box.checked };
-        settingsNote.hidden = false;
-        settingsNote.className = 'note';
-        settingsNote.textContent = 'Saving…';
-        try {
-          const response = await fetch('/api/settings', {
-            method: 'PUT',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body)
-          });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          settingsNote.className = 'note ok';
-          settingsNote.textContent = 'Saved. Takes effect on the next track.';
-        } catch {
-          // Put the checkbox back: a toggle that stays flipped after a failed save is a
-          // lie about what the service will do.
-          box.checked = !box.checked;
-          settingsNote.className = 'note warn';
-          settingsNote.textContent = 'Could not save that. Please try again.';
+      for (const box of settingBoxes) {
+        box.addEventListener('change', (event) => {
+          const target = event.currentTarget;
+          save(
+            target,
+            '/api/settings',
+            { [target.dataset.setting]: target.checked },
+            settingsNote
+          );
+        });
+      }
+
+      /* -------------------------------------------------------------------- rooms */
+
+      const roomsBox = $('rooms');
+      const roomsNote = $('rooms-note');
+
+      /**
+       * Draws the room switches.
+       *
+       * Rendered from the first status read and after a rescan, never on the fifteen
+       * second poll: replacing these nodes under someone's finger would undo a tap.
+       */
+      function renderRooms(rooms) {
+        roomsBox.replaceChildren();
+        if (!rooms.length) {
+          $('rooms-heading').hidden = true;
+          roomsBox.hidden = true;
+          return;
         }
-      }
 
-      radioBox.addEventListener('change', saveSettings);
-      handoffBox.addEventListener('change', saveSettings);
+        for (const room of rooms) {
+          const label = document.createElement('label');
+          label.className = 'toggle';
+
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = room.scrobble;
+
+          const text = document.createElement('span');
+          const name = document.createElement('span');
+          name.className = 'name';
+          // textContent, not innerHTML: the room name is whatever the owner typed into
+          // the Sonos app, and it is rendered on a page with a delete-everything button.
+          name.textContent = room.name ?? room.id;
+          text.append(name);
+
+          box.addEventListener('change', (event) => {
+            const target = event.currentTarget;
+            save(
+              target,
+              '/api/rooms',
+              { playerId: room.id, scrobble: target.checked },
+              roomsNote
+            );
+          });
+
+          label.append(box, text);
+          roomsBox.append(label);
+        }
+
+        const explain = document.createElement('p');
+        explain.className = 'note';
+        explain.textContent =
+          'A room that is off never scrobbles. When rooms are grouped together they ' +
+          'play the same thing, so a group scrobbles only while every room in it is on.';
+        roomsBox.append(explain);
+
+        $('rooms-heading').hidden = false;
+        roomsBox.hidden = false;
+      }
 
       /* -------------------------------------------------------------------- hero */
 
@@ -343,6 +430,7 @@
         if (!signedIn) {
           signedIn = true;
           loadSettings().catch(() => undefined);
+          renderRooms(data.speakers ?? []);
         }
 
         // A revoked grant beats every other state on this page: nothing works without
@@ -438,6 +526,15 @@
         }
         button.disabled = false;
         button.textContent = 'Rescan rooms';
+        // A rescan is how a newly bought speaker turns up, so its switch has to appear
+        // without a reload. Safe to redraw here: the user just pressed a button and is
+        // not mid-tap on a room.
+        try {
+          const status = await (await fetch('/api/account')).json();
+          renderRooms(status.speakers ?? []);
+        } catch {
+          // The poll below will still refresh everything else.
+        }
         refresh().catch(() => undefined);
       });
 

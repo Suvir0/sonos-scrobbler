@@ -12,12 +12,14 @@ const MIGRATIONS: (() => Promise<{ default: string }>)[] = [
   () => import('../../migrations/0001_init.sql?raw'),
   () => import('../../migrations/0002_topology_throttle.sql?raw'),
   () => import('../../migrations/0003_pipeline_health.sql?raw'),
-  () => import('../../migrations/0004_sonos_reauth.sql?raw')
+  () => import('../../migrations/0004_sonos_reauth.sql?raw'),
+  () => import('../../migrations/0005_room_choice.sql?raw')
 ];
 
 const TABLES = [
   'sessions',
   'subscriptions',
+  'sonos_players',
   'sonos_groups',
   'households',
   'targets',

@@ -174,7 +174,8 @@ rejects a replayed request carrying different content.
 | `src/index.ts` | routing, the origin check, and the scheduled renewal sweep |
 | `src/lib/http.ts` | response helpers, the security headers, the same-origin check |
 | `src/lib/identity.ts` | the product name, version and User-Agent, in one place |
-| `src/routes/settings.ts` | the two playback-source opt-outs |
+| `src/routes/settings.ts` | the playback-source opt-outs |
+| `src/rooms.ts` | which rooms may scrobble, and resolving that to a group |
 | `public/` | the front page, privacy and terms pages, 404, icon, manifest |
 | `public/fonts/` | Archivo and IBM Plex Mono, self-hosted — see `fonts/README.md` |
 | `src/scrobble/session.ts` | the anchored clock — **the core of the service** |
@@ -186,6 +187,7 @@ rejects a replayed request carrying different content.
 | `src/sonos/{oauth,account,client}.ts` | authorization, token refresh, Control API |
 | `src/subscriptions.ts` | subscribe, renew, follow group changes |
 | `migrations/0004_sonos_reauth.sql` | the flag that says a Sonos grant was revoked |
+| `migrations/0005_room_choice.sql` | per-room scrobbling, and the song-length ceiling |
 | `src/do/` | Durable Objects: group session, user queue, OAuth state |
 | `src/sonos/budget.ts` | our own request ceiling, below Sonos's shared quota |
 | `src/testing/replay.ts` | the event replay harness — see below |
@@ -277,7 +279,8 @@ ones this service uses. §2(c) may still require an additional license for comme
 | `POST /webhooks/sonos` | the Sonos event callback |
 | `/auth/sonos/*`, `/auth/lastfm/*`, `POST /auth/listenbrainz` | linking |
 | `GET /api/account`, `DELETE /api/account` | status, and delete everything |
-| `GET|PUT /api/settings` | radio and cast-playback opt-outs |
+| `GET|PUT /api/settings` | radio, cast-playback and long-track opt-outs |
+| `GET|PUT /api/rooms` | which rooms are allowed to scrobble |
 | `POST /api/resync` | re-discover rooms and re-subscribe |
 
 The front end is the Claude Design comp, built as static assets with no framework and no

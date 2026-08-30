@@ -24,6 +24,7 @@ import {
 import type { GroupsStatus, MetadataStatus, PlaybackStatus } from '../sonos/types.js';
 import { clientForUser } from '../sonos/account.js';
 import { syncHousehold, subscriptionId } from '../subscriptions.js';
+import { groupMayScrobble } from '../rooms.js';
 import { log } from '../lib/log.js';
 
 const OK = new Response(null, { status: 200 });
@@ -115,7 +116,11 @@ async function dispatch(env: Env, headers: SonosEventHeaders, body: unknown): Pr
     const result = await syncHousehold(env, row.user_id, row.household_id, client, nowMs, {
       subscribeHousehold: false,
       onlyMissing: true,
-      ...(payload.groups ? { knownGroups: payload.groups } : {})
+      ...(payload.groups ? { knownGroups: payload.groups } : {}),
+      // The room names, from the same payload. Without them a brand new group is
+      // recorded with member ids nothing can put a name to, and its rooms are missing
+      // from the page that is supposed to let somebody switch them off.
+      ...(payload.players ? { knownPlayers: payload.players } : {})
     });
     log(env, 'info', 'sonos.groups.event', {
       householdId: row.household_id,
@@ -131,18 +136,26 @@ async function dispatch(env: Env, headers: SonosEventHeaders, body: unknown): Pr
 
   // Cheap and idempotent, and it means a session created by an event rather than by
   // the link flow still knows whose it is and what their source policy is.
-  const settings = await env.DB.prepare(
-    'SELECT scrobble_radio, allow_handoff FROM users WHERE id = ?'
-  )
-    .bind(row.user_id)
-    .first<{ scrobble_radio: number; allow_handoff: number }>();
+  const [settings, mayScrobble] = await Promise.all([
+    env.DB.prepare(
+      'SELECT scrobble_radio, allow_handoff, skip_long_tracks FROM users WHERE id = ?'
+    )
+      .bind(row.user_id)
+      .first<{ scrobble_radio: number; allow_handoff: number; skip_long_tracks: number }>(),
+    // Resolved per event rather than stored on the session: the answer changes when
+    // somebody regroups rooms, not only when they change a setting, and a regroup
+    // produces a new group id whose session has never been initialized at all.
+    groupMayScrobble(env, row.user_id, targetId)
+  ]);
 
   await session.initialize({
     userId: row.user_id,
     householdId: row.household_id,
     groupId: targetId,
     allowRadio: (settings?.scrobble_radio ?? 1) === 1,
-    allowHandoff: (settings?.allow_handoff ?? 0) === 1
+    allowHandoff: (settings?.allow_handoff ?? 0) === 1,
+    skipLongTracks: (settings?.skip_long_tracks ?? 1) === 1,
+    scrobbleEnabled: mayScrobble
   });
 
   const outcome =

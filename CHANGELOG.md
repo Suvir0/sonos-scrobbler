@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+**Every route was unreachable from a browser.** With `not_found_handling` set, the
+Cloudflare asset router answers a navigation request that matches no file before the
+Worker runs, so "Connect Sonos", "Connect Last.fm", both OAuth callbacks and `/healthz`
+served the static 404 page to anyone clicking them. curl and the dashboard's own
+`fetch()` were unaffected, which is why nothing caught it: neither sends
+`Sec-Fetch-Mode: navigate`. Fixed with an explicit `assets.run_worker_first` list, and
+`check-assets.mjs` now fails when a route in `src/index.ts` is missing from it.
+
+**Per-room scrobbling.** Every speaker has its own switch. Sonos sends events per
+group, and a group is torn down and recreated whenever somebody links rooms together,
+so the preference is stored against the player id (the speaker, which is stable) and
+resolved to a group at the moment an event arrives. A group scrobbles only while every
+room in it is on, which makes switching a room off a promise about that speaker rather
+than one that lapses the moment it is grouped with another. A room that is switched off
+drops whatever it had in flight rather than finishing it.
+
+**A ceiling on how long a song may be.** TV, line-in, podcasts and audiobooks were
+already refused, and playback cast from an app — how a YouTube video usually reaches a
+Sonos — is off by default. What still got through was a long file wearing a title and
+an artist: a DJ set, a mix, a film soundtrack as one item, a sleep recording. Anything
+reporting more than twenty minutes is now refused, as a setting rather than a rule,
+because an hour-long live set is somebody's real listening. Radio is never affected: it
+reports the stream's length rather than the song's, and that figure was already
+discarded.
+
+**Copy.** The page text rewritten throughout to drop the em dashes, the
+three-fragment headline and the subjectless sentences.
+
+**Fixed.** `check-assets.mjs` read `public/` through `URL.pathname`, so it crashed on
+any checkout whose directory name contains a space. The README's Sonos portal link had
+lost its scheme and rendered as literal text.
+
 ## 1.0.0 — first public release
 
 **Identity.** Named Scrobbler for Sonos throughout, including the `media_player`

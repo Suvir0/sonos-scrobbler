@@ -18,6 +18,7 @@ import {
   startSonosLink
 } from './routes/auth.js';
 import { health, securityTxt } from './routes/health.js';
+import { getRooms, updateRoom } from './routes/rooms.js';
 import { getSettings, updateSettings } from './routes/settings.js';
 import { handleSonosWebhook } from './routes/webhook.js';
 import { renewDue } from './subscriptions.js';
@@ -98,6 +99,15 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     const user = await requireUser(request, env);
     return user instanceof Response ? user : await deleteAccount(env, user);
   }
+  if (path === '/api/rooms' && method === 'GET') {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : await getRooms(env, user);
+  }
+  if (path === '/api/rooms' && (method === 'PUT' || method === 'POST')) {
+    const user = await requireUser(request, env);
+    return user instanceof Response ? user : await updateRoom(request, env, user);
+  }
+
   if (path === '/api/settings' && method === 'GET') {
     const user = await requireUser(request, env);
     return user instanceof Response ? user : await getSettings(env, user);

@@ -39,10 +39,12 @@ export const SECURITY_CONTACT = 'hello@suvir.net';
  * difference between a minute and an evening.
  */
 const REQUIRED_COLUMNS: Record<string, readonly string[]> = {
-  users: ['scrobble_radio', 'allow_handoff', 'last_scrobble_at'],
+  users: ['scrobble_radio', 'allow_handoff', 'last_scrobble_at', 'skip_long_tracks'],
   households: ['last_sync_at'],
   subscriptions: ['last_seq_id', 'last_event_at'],
-  sonos_accounts: ['needs_reauth']
+  sonos_accounts: ['needs_reauth'],
+  sonos_groups: ['player_ids'],
+  sonos_players: ['scrobble']
 };
 
 async function checkSchema(env: Env): Promise<string> {
