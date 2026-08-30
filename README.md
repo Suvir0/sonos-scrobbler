@@ -1,5 +1,8 @@
 # Scrobbler for Sonos
 
+[![CI](https://github.com/Suvir0/sonos-scrobbler/actions/workflows/ci.yml/badge.svg)](https://github.com/Suvir0/sonos-scrobbler/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Scrobbles what your Sonos speakers play to **Last.fm** and **ListenBrainz**, with nothing
 running at home. Sonos's cloud pushes playback events to this service; it derives how long
 each track was actually listened to and submits the ones that qualify.
@@ -230,6 +233,11 @@ and asserts it gets refused.
 npm install && npm test
 ```
 
+`npm run check:assets` checks the static pages: every reference local and present, no
+remote subresource the content security policy would block at runtime, and the two font
+licences still shipping. There is no build step, so nothing else would catch a page
+pointing at a file that is not there. CI runs it alongside the tests and the type check.
+
 ```bash
 npm run dev
 ```
@@ -264,6 +272,8 @@ ones this service uses. §2(c) may still require an additional license for comme
 | `GET /` | the whole product: link accounts, see status, change settings |
 | `GET /privacy`, `GET /terms` | what is stored and under what terms |
 | `GET /healthz` | round-trips encryption and both HMAC keys, touches D1 |
+| `GET /colophon` | what it is built from, and under which licences |
+| `GET /.well-known/security.txt` | RFC 9116; served from the Worker, not `public/` |
 | `POST /webhooks/sonos` | the Sonos event callback |
 | `/auth/sonos/*`, `/auth/lastfm/*`, `POST /auth/listenbrainz` | linking |
 | `GET /api/account`, `DELETE /api/account` | status, and delete everything |
@@ -351,3 +361,41 @@ distinguishes "200 but degraded" from "ok" in the body rather than the status al
 nothing watches it. Before signups: point an uptime check at it that alerts on the body's
 `status`, and add a Cloudflare notification on Worker error rate. A cron run reporting
 `failed > 0` and a `waitUntil` that throws are both `console.warn` lines and nothing more.
+
+---
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE). You can read it, run your own copy, and change it.
+
+The MIT licence covers the source only. The two bundled typefaces, **Archivo** and **IBM
+Plex Mono**, are under the SIL Open Font License 1.1 and ship with their own licence
+files in `public/fonts/`, which that licence requires. [`NOTICE`](NOTICE) has the full
+attribution, including the trademark position on Sonos, Last.fm and ListenBrainz.
+
+Being able to read the source is what makes the privacy page checkable rather than
+merely stated: that there is no history table is a fact about `migrations/0001_init.sql`,
+not a promise.
+
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability, and what is already known.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — what this codebase asks of a change.
+- [`CHANGELOG.md`](CHANGELOG.md) — what shipped in 1.0.0.
+
+## Deploying
+
+```bash
+npx wrangler login          # once, as the account that owns scrobbler.suvir.net
+npm run db:remote           # first deploy only — applies every migration in order
+npm run deploy
+```
+
+Then confirm the deploy actually works rather than merely responding:
+
+```bash
+curl -s https://scrobbler.suvir.net/healthz | jq .status   # must print "ok", not "degraded"
+curl -s https://scrobbler.suvir.net/.well-known/security.txt
+```
+
+A 200 from `/healthz` with `"status": "degraded"` means the Worker is up and cannot
+scrobble — a mistyped secret, or an encryption key that does not decode to 32 bytes. The
+body is the check, not the status code.

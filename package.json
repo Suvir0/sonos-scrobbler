@@ -2,6 +2,12 @@
   "name": "scrobbler-for-sonos",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
+  "author": "Suvir Potdar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Suvir0/sonos-scrobbler.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -10,7 +16,8 @@
     "test:watch": "vitest",
     "type-check": "tsc --noEmit",
     "db:local": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --local --file=\"$f\" || exit 1; done",
-    "db:remote": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --remote -y --file=\"$f\" || exit 1; done"
+    "db:remote": "for f in migrations/*.sql; do wrangler d1 execute sonos-scrobbler --remote -y --file=\"$f\" || exit 1; done",
+    "check:assets": "node scripts/check-assets.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.8",

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { encryptSecret, sha256Hex, sonosEventSignature } from './lib/crypto.js';
 import { createSession, SESSION_COOKIE } from './lib/session.js';
 import { OAUTH_STATE_TTL_MS } from './do/oauth-state.js';
+import { SECURITY_CONTACT } from './routes/health.js';
 import { applySchema, resetTables } from './testing/schema.js';
 
 const CLIENT_ID = 'test-client-id';
@@ -400,6 +401,22 @@ describe('hardening', () => {
       body: 'not json'
     });
     expect(response.status).toBe(400);
+  });
+
+  // Served from the Worker rather than from public/, because Wrangler's asset upload
+  // does not reliably include dot-directories and a security contact that 404s is worse
+  // than not publishing one.
+  it('publishes an unexpired security.txt with a reachable contact', async () => {
+    const response = await SELF.fetch('https://example.com/.well-known/security.txt');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+
+    const body = await response.text();
+    expect(body).toContain(`Contact: mailto:${SECURITY_CONTACT}`);
+    expect(body).toContain(`Canonical: ${env.PUBLIC_BASE_URL}/.well-known/security.txt`);
+
+    const expires = /Expires: (\S+)/.exec(body)?.[1];
+    expect(Date.parse(expires!)).toBeGreaterThan(Date.now());
   });
 
   // A wrong verb on a known path used to fall through to the assets binding and come

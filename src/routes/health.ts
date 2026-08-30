@@ -26,6 +26,9 @@ const REQUIRED = [
   'SESSION_SECRET'
 ] as const satisfies readonly (keyof Env)[];
 
+/** Where a vulnerability report should go. Matches SECURITY.md and the colophon. */
+export const SECURITY_CONTACT = 'hello@suvir.net';
+
 export async function health(env: Env): Promise<Response> {
   const checks: Record<string, string> = {};
 
@@ -65,4 +68,32 @@ export async function health(env: Env): Promise<Response> {
 
   const healthy = Object.values(checks).every((value) => value === 'ok');
   return json({ status: healthy ? 'ok' : 'degraded', checks }, { status: healthy ? 200 : 503 });
+}
+
+/**
+ * RFC 9116 security.txt.
+ *
+ * Served from the Worker rather than from `public/`, because Wrangler's asset upload
+ * does not reliably include dot-directories, and a security contact that 404s is worse
+ * than not publishing one — a researcher who cannot find an address reports in public.
+ */
+export function securityTxt(env: Env): Response {
+  const base = env.PUBLIC_BASE_URL.replace(/\/$/, '');
+  // RFC 9116 requires an expiry, and a stale one is a signal the file is unmaintained.
+  // A year out, recomputed on each request so it never goes stale on its own.
+  const expires = new Date(Date.now() + 365 * 24 * 60 * 60_000).toISOString();
+  const body = [
+    `Contact: mailto:${SECURITY_CONTACT}`,
+    `Policy: ${base}/colophon`,
+    'Preferred-Languages: en',
+    `Canonical: ${base}/.well-known/security.txt`,
+    `Expires: ${expires}`,
+    ''
+  ].join('\n');
+  return new Response(body, {
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'public, max-age=86400'
+    }
+  });
 }

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A pull request that is pushed to twice does not need the first run to finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run type-check
+
+      # vitest-pool-workers runs these against the real Durable Object and D1
+      # implementations, so this is the workerd runtime rather than a mock of it.
+      - run: npm test
+
+      # The pages are static assets with no build step, so the one thing CI can check
+      # is that they are well-formed and that nothing reaches a remote origin the
+      # content security policy would block at runtime.
+      - name: Check the static pages
+        run: node scripts/check-assets.mjs

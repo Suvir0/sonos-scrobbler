@@ -1,0 +1,27 @@
+Scrobbler for Sonos
+Copyright (c) 2026 Suvir Potdar
+
+This product is licensed under the MIT License; see LICENSE.
+
+The MIT licence above covers the source code only. Two bundled typefaces are
+licensed separately and are NOT covered by it:
+
+  Archivo
+  Copyright 2020 The Archivo Project Authors
+  https://github.com/Omnibus-Type/Archivo
+  SIL Open Font License 1.1 — public/fonts/Archivo-OFL.txt
+
+  IBM Plex Mono
+  Copyright (c) 2017 IBM Corp. with Reserved Font Name "Plex"
+  https://github.com/IBM/plex
+  SIL Open Font License 1.1 — public/fonts/IBMPlexMono-OFL.txt
+
+The OFL permits redistribution provided each licence travels with its font,
+which is why those two files ship alongside the .woff2 files rather than being
+referenced from here.
+
+Trademarks
+  Sonos is a trademark of Sonos, Inc. Last.fm and ListenBrainz are the
+  trademarks of their respective owners. This project is not affiliated with,
+  endorsed by, or sponsored by any of them, and uses their names only to say
+  what it interoperates with.

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Colophon · Scrobbler for Sonos</title>
+    <meta
+      name="description"
+      content="What Scrobbler for Sonos is built from, who made the parts, and the licences they are under."
+    />
+    <meta name="theme-color" content="#f3efe7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#14120d" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/fonts/Archivo-variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <a class="wordmark" href="/">Scrobbler <em>for</em> Sonos</a>
+      </header>
+      <article class="prose">
+        <h1>Colophon</h1>
+        <p class="lede">
+          What this is built from, who made the parts, and the licences they are under.
+        </p>
+
+        <h2>The software</h2>
+        <p>
+          Open source under the MIT licence, which means you can read it, run your own copy,
+          and change it. The source is at
+          <a href="https://github.com/Suvir0/sonos-scrobbler" rel="noopener noreferrer"
+            >github.com/Suvir0/sonos-scrobbler</a
+          >, and reading it is the only way to actually check the claims on the
+          <a href="/privacy">privacy page</a> — that there is no history table is a fact about
+          the schema, not a promise.
+        </p>
+        <p>
+          It runs on Cloudflare Workers with D1 for the account records and Durable Objects for
+          the playing-right-now state, which is why there is nothing to install and nothing
+          running at home.
+        </p>
+
+        <h2>The typefaces</h2>
+        <p>
+          <strong>Archivo</strong> by Omnibus-Type sets the headings and the body;
+          <strong>IBM Plex Mono</strong> sets the labels and the readings. Both are under the
+          SIL Open Font License 1.1 —
+          <a href="/fonts/Archivo-OFL.txt">Archivo's licence</a> and
+          <a href="/fonts/IBMPlexMono-OFL.txt">IBM Plex Mono's licence</a> ship with them, as
+          that licence requires.
+        </p>
+        <p>
+          They are served from this domain rather than from a font CDN. A webfont request
+          carries your IP address and the page you are reading to whoever answers it, and the
+          privacy page says no page here makes a third-party request. That has to be true of
+          fonts too.
+        </p>
+
+        <h2>Who this talks to</h2>
+        <ul>
+          <li>
+            <strong>Sonos</strong>, whose cloud sends this service an event when your playback
+            changes. Sonos is a trademark of Sonos, Inc. This project is not affiliated with,
+            endorsed by, or sponsored by them.
+          </li>
+          <li>
+            <strong>Last.fm</strong> and <strong>ListenBrainz</strong>, which receive the plays
+            — but only the ones you connected an account for. Their trademarks are their own.
+          </li>
+        </ul>
+        <p>
+          Nothing else. No analytics, no advertising, no error-reporting service, no embedded
+          anything. The content security policy this site sends forbids loading a script,
+          stylesheet or image from anywhere but here, so that is enforced rather than promised.
+        </p>
+
+        <h2>Reporting a problem</h2>
+        <p>
+          A security problem — anything that could expose somebody's credentials — goes to
+          <a href="mailto:hello@suvir.net">hello@suvir.net</a> rather than a public issue. See
+          the
+          <a
+            href="https://github.com/Suvir0/sonos-scrobbler/blob/main/SECURITY.md"
+            rel="noopener noreferrer"
+            >security policy</a
+          >. Anything else is welcome as a
+          <a
+            href="https://github.com/Suvir0/sonos-scrobbler/issues"
+            rel="noopener noreferrer"
+            >GitHub issue</a
+          >.
+        </p>
+
+        <h2>No warranty</h2>
+        <p>
+          The MIT licence disclaims warranties and liability, and the
+          <a href="/terms">terms</a> say the same in plainer words: this is offered as is, it
+          depends on three services that can change or stop, and a play that happens during an
+          outage is not recoverable. It is a small project run by one person.
+        </p>
+      </article>
+      <footer>
+        <nav>
+          <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="https://github.com/Suvir0/sonos-scrobbler" rel="noopener noreferrer">Source</a>
+        </nav>
+      </footer>
+    </main>
+  </body>
+</html>

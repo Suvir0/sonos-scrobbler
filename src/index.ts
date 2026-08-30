@@ -17,7 +17,7 @@ import {
   startLastfmLink,
   startSonosLink
 } from './routes/auth.js';
-import { health } from './routes/health.js';
+import { health, securityTxt } from './routes/health.js';
 import { getSettings, updateSettings } from './routes/settings.js';
 import { handleSonosWebhook } from './routes/webhook.js';
 import { renewDue } from './subscriptions.js';
@@ -55,6 +55,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   }
 
   if (path === '/healthz') return await health(env);
+  if (path === '/.well-known/security.txt') return securityTxt(env);
 
   // Everything below this line either changes state or reads a signed-in user's data.
   // The webhook is excluded above because it authenticates by signature and carries no
