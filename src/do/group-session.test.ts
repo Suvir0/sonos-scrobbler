@@ -287,3 +287,64 @@ describe('a group session, driven by realistic event sequences', () => {
     expect(timesScrobbled(result, 'Come Down')).toBe(1);
   });
 });
+
+/**
+ * Concurrency, which the replay harness cannot reach.
+ *
+ * `replay` awaits each event before sending the next, so every path it exercises is a
+ * serial one. Real events are not serial: Sonos emits `playbackMetadata` and `playback`
+ * milliseconds apart on a track change, and this household's own subscription rows show
+ * the pair landing about 200ms apart. A Durable Object's input gate does not hold the
+ * second one off, because the gate only closes around *storage* operations and these
+ * handlers await a D1 query and a cross-object RPC as well.
+ */
+describe('two events for one track change, arriving together', () => {
+  beforeEach(freshDatabase);
+
+  it('hands the outgoing play to the queue once, not once per event', async () => {
+    const stub = await configured();
+    const start = 1_800_000_000_000;
+
+    // A track plays. No alarm is fired, so it is still unsubmitted when the change
+    // comes — which is the state in which `finalizeCurrent` decides anything at all.
+    await stub.onMetadataStatus(metadataFor(SONG), start);
+    await stub.onPlaybackStatus(playing(0), start + 100);
+
+    // The change itself, with the position reading duplicated the way a retried or
+    // twinned delivery presents it.
+    const at = start + 180_000;
+    await stub.onMetadataStatus(metadataFor(NEXT), at);
+    const outcomes = await Promise.all([
+      stub.onPlaybackStatus(playing(0, 179_000), at + 100),
+      stub.onPlaybackStatus(playing(0, 179_000), at + 200)
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.scrobbled?.track === 'Come Down')).toHaveLength(
+      1
+    );
+  });
+
+  it('closes a finished queue once when two idle events arrive together', async () => {
+    // A different call site into the same defect. `finalizeCurrent` computed the session
+    // `finalize` had marked submitted and then threw it away, so the stored session
+    // still read `submitted: false` for the whole of the enqueue RPC — long enough for
+    // the second event to finalize the very same play.
+    const stub = await configured();
+    const start = 1_800_000_000_000;
+
+    await stub.onMetadataStatus(metadataFor(SONG), start);
+    await stub.onPlaybackStatus(playing(0), start + 100);
+
+    const at = start + 179_000;
+    const outcomes = await Promise.all([
+      stub.onPlaybackStatus(idle(), at),
+      stub.onPlaybackStatus(idle(), at + 100)
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.scrobbled?.track === 'Come Down')).toHaveLength(
+      1
+    );
+    // And the session really is gone, rather than left behind for the next alarm.
+    expect(await sessionOf(stub)).toBeUndefined();
+  });
+});

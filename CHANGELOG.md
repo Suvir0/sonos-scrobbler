@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+**Every song was scrobbled twice, and only Last.fm showed it.** A track change is a
+`playbackMetadata` and a `playback` event emitted milliseconds apart — the live
+subscription rows show the pair landing about 200ms apart — and both were being
+handled at once. `GroupSession` was written against the assumption, stated in its own
+header, that a Durable Object gives it one event at a time. It does not: the input
+gate only holds events back while a *storage* operation is outstanding, and these
+handlers also await a D1 query and the cross-object `USER_QUEUES.enqueue` RPC. So two
+handlers read the same outgoing session, both found it unsubmitted — `finalizeCurrent`
+computed the `submitted` flag and discarded it rather than storing it — and both handed
+the identical play to the queue.
+
+`UserQueue` then had the same shape of hole, which is what let the second copy actually
+reach a service. Its dedupe is sound but can only refuse what it has loaded, and each
+call rebuilds the queue from storage around a D1 read: the second caller's copy of
+`accepted` predated the first caller's write, so it submitted a play already in flight.
+
+Both objects now serialize their own work, which is the property the state machines were
+always written against, and a hand-off is recorded before it is made rather than after.
+The reason this looked like a Last.fm fault is that both submissions carried an identical
+timestamp: ListenBrainz collapses two identical listens server-side and Last.fm does not,
+so the same defect was invisible on one service and doubled every song on the other.
+
 **One person's plays are no longer scrobbled twice.** Sonos names speakers, not
 people, so somebody returning without a session cookie — cleared it, new browser,
 or simply past the 30-day session — is handed a new account that then links the

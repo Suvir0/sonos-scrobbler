@@ -43,11 +43,19 @@ async function targetRow(): Promise<{ needs_reauth: number; last_error: string |
  * Answers the submission endpoint however the test needs, and records that it was
  * actually called — so a test cannot pass because no request was made at all.
  */
-function interceptSubmit(status: number, body: unknown): { calls: string[] } {
+function interceptSubmit(
+  status: number,
+  body: unknown,
+  delayMs = 0
+): { calls: string[] } {
   const calls: string[] = [];
   vi.stubGlobal('fetch', async (input: unknown) => {
     const url = String(input);
     calls.push(url);
+    // A submission is an HTTP round trip, not an instant return. The delay is what makes
+    // the concurrency test below deterministic rather than a coin toss: it holds the
+    // first caller inside `flush` long enough for a second one to be delivered.
+    if (delayMs) await scheduler.wait(delayMs);
     return new Response(JSON.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' }
@@ -107,6 +115,20 @@ describe('a target that refuses a play', () => {
     const row = await targetRow();
     expect(row.needs_reauth).toBe(0);
     expect(row.last_error).toBeNull();
+  });
+
+  it('submits a play once when two events hand it over at the same moment', async () => {
+    // A track change is a `playbackMetadata` and a `playback` event milliseconds apart,
+    // so the outgoing play can be handed over twice, concurrently. The queue's dedupe is
+    // sound but can only refuse what it has loaded: rebuilt from storage around a D1
+    // read, the second caller's copy of `accepted` predated the first caller's write, so
+    // both submitted. ListenBrainz collapses the pair server-side and Last.fm does not,
+    // which is the whole reason this read as a Last.fm-only fault.
+    const submit = interceptSubmit(200, { status: 'ok' }, 50);
+
+    await Promise.all([queue().enqueue(USER_ID, TRACK), queue().enqueue(USER_ID, TRACK)]);
+
+    expect(submit.calls.filter((url) => url.includes('submit-listens'))).toHaveLength(1);
   });
 
   it('records a transient failure without declaring the credential dead', async () => {

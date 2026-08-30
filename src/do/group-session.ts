@@ -2,10 +2,11 @@
  * One Durable Object per Sonos group: the live play session for that group.
  *
  * A DO is the right home for this because the state is small, strongly consistent, and
- * needs a timer. Events for a group arrive concurrently from Sonos's fleet; the DO's
- * single-threaded execution is what stops two events interleaving and corrupting the
- * clock, and its alarm is what lets a track scrobble the moment it crosses its
- * threshold without anybody polling anything.
+ * needs a timer. Events for a group arrive concurrently from Sonos's fleet; `serialize`
+ * is what stops two of them interleaving and corrupting the clock, and the alarm is what
+ * lets a track scrobble the moment it crosses its threshold without anybody polling
+ * anything. Note that the runtime does *not* provide that serialization on its own —
+ * see `serialize` for why, and for what it cost.
  *
  * ZERO RETENTION: the track fields below exist only while a play is in flight. Once a
  * play resolves, its metadata is handed to the queue and erased here. Nothing in this
@@ -114,6 +115,43 @@ export interface EventOutcome {
 }
 
 export class GroupSession extends DurableObject<Env> {
+  /**
+   * The tail of the handled-events chain. See `serialize`.
+   *
+   * Instance state is a sound lock here precisely because a Durable Object has one live
+   * instance per id: there is no second copy of this field to race against.
+   */
+  private inFlight: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Runs one event at a time.
+   *
+   * The header of this file claims the object's "single-threaded execution is what stops
+   * two events interleaving and corrupting the clock". That was not true. A Durable
+   * Object's input gate only holds events back while a *storage* operation is
+   * outstanding, and every handler in here awaits things that are not storage — a D1
+   * query, `clientForUser`, and above all the cross-object `USER_QUEUES.enqueue` RPC
+   * that hands a play over. The gate opens at each of those, so a second event is
+   * delivered into the middle of the first one's read-modify-write.
+   *
+   * Sonos makes that the normal case rather than a rare one: a track change is a
+   * `playbackMetadata` and a `playback` event emitted milliseconds apart, and this
+   * household's own subscription rows show the pair landing about 200ms apart. Two
+   * handlers then both read the *same* outgoing session, both find it unsubmitted, and
+   * both hand the identical play to the queue. Serializing here restores the property
+   * the state machine was written against.
+   */
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.inFlight.then(work, work);
+    // Swallowed on the chain only. One handler throwing must not reject every event
+    // queued behind it; the caller still sees its own rejection through `next`.
+    this.inFlight = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }
+
   private async config(): Promise<GroupSessionInit | undefined> {
     return this.ctx.storage.get<GroupSessionInit>('config');
   }
@@ -128,6 +166,11 @@ export class GroupSession extends DurableObject<Env> {
 
   /** Wipes everything. Used on unlink, and when a group disappears. */
   async reset(): Promise<void> {
+    return this.serialize(() => this.clearAll());
+  }
+
+  /** The body of `reset`, callable from a handler that already holds the lock. */
+  private async clearAll(): Promise<void> {
     await this.ctx.storage.deleteAll();
     await this.ctx.storage.deleteAlarm();
   }
@@ -158,6 +201,22 @@ export class GroupSession extends DurableObject<Env> {
   /* ------------------------------------------------------------ event entry */
 
   async onPlaybackStatus(status: PlaybackStatus, nowMs: number): Promise<EventOutcome> {
+    return this.serialize(() => this.handlePlaybackStatus(status, nowMs));
+  }
+
+  async onMetadataStatus(status: MetadataStatus, nowMs: number): Promise<EventOutcome> {
+    return this.serialize(() => this.handleMetadataStatus(status, nowMs));
+  }
+
+  /** A group vanished from the household. Close out whatever it was playing. */
+  async onGroupRemoved(nowMs: number): Promise<EventOutcome> {
+    return this.serialize(() => this.handleGroupRemoved(nowMs));
+  }
+
+  private async handlePlaybackStatus(
+    status: PlaybackStatus,
+    nowMs: number
+  ): Promise<EventOutcome> {
     const gate = await this.config();
     if (gate?.scrobbleEnabled === false) return await this.standDown();
 
@@ -203,7 +262,10 @@ export class GroupSession extends DurableObject<Env> {
     return {};
   }
 
-  async onMetadataStatus(status: MetadataStatus, nowMs: number): Promise<EventOutcome> {
+  private async handleMetadataStatus(
+    status: MetadataStatus,
+    nowMs: number
+  ): Promise<EventOutcome> {
     const config = await this.config();
     if (config?.scrobbleEnabled === false) return await this.standDown();
 
@@ -241,11 +303,10 @@ export class GroupSession extends DurableObject<Env> {
     return {};
   }
 
-  /** A group vanished from the household. Close out whatever it was playing. */
-  async onGroupRemoved(nowMs: number): Promise<EventOutcome> {
+  private async handleGroupRemoved(nowMs: number): Promise<EventOutcome> {
     const current = await this.session();
     const outcome = current ? await this.finalizeCurrent(current, nowMs) : {};
-    await this.reset();
+    await this.clearAll();
     return outcome;
   }
 
@@ -256,11 +317,15 @@ export class GroupSession extends DurableObject<Env> {
     input: { positionMs: number; playing: boolean; nowMs: number }
   ): Promise<EventOutcome> {
     const current = await this.session();
+    // Claimed before `finalizeCurrent`, which hands the outgoing play to another Durable
+    // Object and waits on the RPC. Deleting it afterwards left the transition claimable
+    // for the whole of that wait, so a second event arriving in the window resolved the
+    // same track change again and submitted the outgoing play a second time.
+    await this.ctx.storage.delete('pending');
     const outcome = current ? await this.finalizeCurrent(current, input.nowMs) : {};
 
     const started = startSession(pending.track, input);
     await this.ctx.storage.put('session', started);
-    await this.ctx.storage.delete('pending');
     await this.ctx.storage.delete('hint');
     // A new track gets a fresh reconcile allowance; the cap bounds one stuck session,
     // not the group for the rest of the day.
@@ -291,12 +356,21 @@ export class GroupSession extends DurableObject<Env> {
     finalPositionMs?: number
   ): Promise<EventOutcome> {
     const resolved = finalPositionMs ?? (await this.freshHint(nowMs));
-    const { scrobble } = finalize(session, {
+    const { scrobble, session: closed } = finalize(session, {
       nowMs,
       ...(resolved === undefined ? {} : { finalPositionMs: resolved })
     });
     await this.ctx.storage.delete('hint');
     if (!scrobble) return {};
+    // Record the hand-off before making it, not after.
+    //
+    // `finalize` returns the session marked `submitted`, and that flag is the only thing
+    // standing between a play and being scrobbled twice — but it was thrown away here,
+    // so the stored session still read `submitted: false` for as long as the enqueue RPC
+    // took. Every caller does go on to delete or replace the session, and that is enough
+    // when nothing else runs in between; it is not enough across an await. It is also
+    // what an alarm retried after a failure further down would read.
+    await this.ctx.storage.put('session', closed);
     await this.enqueue(scrobble, nowMs);
     return { scrobbled: scrobble };
   }
@@ -385,7 +459,7 @@ export class GroupSession extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
-    await this.tick(Date.now());
+    await this.serialize(() => this.handleTick(Date.now()));
   }
 
   /**
@@ -397,6 +471,10 @@ export class GroupSession extends DurableObject<Env> {
    * the two worst bugs in this file so far both lived on exactly these paths.
    */
   async tick(nowMs: number): Promise<EventOutcome> {
+    return this.serialize(() => this.handleTick(nowMs));
+  }
+
+  private async handleTick(nowMs: number): Promise<EventOutcome> {
     // 1. A debounced track change whose playbackStatus never arrived.
     const pending = await this.ctx.storage.get<PendingTrack>('pending');
     if (pending) {
@@ -495,8 +573,10 @@ export class GroupSession extends DurableObject<Env> {
       ]);
       await this.ctx.storage.put('reconcileAttempts', attempts + 1);
 
-      const fromMetadata = await this.onMetadataStatus(metadata, nowMs);
-      const fromPlayback = await this.onPlaybackStatus(playback, nowMs);
+      // The unlocked bodies: this already runs inside `serialize`, and calling the public
+      // entry points would queue behind a lock this call is itself holding.
+      const fromMetadata = await this.handleMetadataStatus(metadata, nowMs);
+      const fromPlayback = await this.handlePlaybackStatus(playback, nowMs);
       return {
         ...fromMetadata,
         ...fromPlayback,

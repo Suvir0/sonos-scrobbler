@@ -38,6 +38,39 @@ interface TargetRow {
 const FLUSH_RETRY_FLOOR_MS = 15_000;
 
 export class UserQueue extends DurableObject<Env> {
+  /** The tail of the queue-work chain. See `serialize`. */
+  private inFlight: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Runs one piece of queue work at a time.
+   *
+   * Everything below rebuilds a `ScrobbleQueue` from storage, mutates it, and writes it
+   * back — and does so around awaits that are not storage operations, so the Durable
+   * Object's input gate does not hold the next call off. `loadTargets` is a D1 query and
+   * `flush` waits on an HTTP request to Last.fm; either is long enough for a second
+   * `enqueue` to be delivered and read the same pre-mutation snapshot.
+   *
+   * That is what turned a play handed over twice into a play *scrobbled* twice. The
+   * queue's own dedupe is sound — `add` refuses a key it already holds — but it can only
+   * refuse what it can see, and the second caller had loaded its copy of `accepted`
+   * before the first caller's write landed. It then submitted a play the first caller
+   * was already submitting.
+   *
+   * Invisible on ListenBrainz, which collapses two identical listens server-side, and
+   * plainly visible on Last.fm, which does not. Hence a bug that looked service-specific
+   * and was not.
+   */
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.inFlight.then(work, work);
+    // Swallowed on the chain only, so one failed flush does not reject the plays queued
+    // behind it. The caller still sees its own rejection through `next`.
+    this.inFlight = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }
+
   /**
    * Storage for one target's queue, scoped by key so the two targets cannot collide.
    *
@@ -117,13 +150,16 @@ export class UserQueue extends DurableObject<Env> {
 
   /** Accepts an earned play. Called by GroupSession the moment a threshold is crossed. */
   async enqueue(userId: string, track: ScrobbleTrack): Promise<void> {
-    await this.ctx.storage.put('userId', userId);
-    const targets = await this.loadTargets(userId);
-    for (const [kind, target] of targets) {
-      const queue = await this.queueFor(kind, target);
-      await queue.add(track);
-    }
-    await this.flush();
+    return this.serialize(async () => {
+      await this.ctx.storage.put('userId', userId);
+      const targets = await this.loadTargets(userId);
+      for (const [kind, target] of targets) {
+        const queue = await this.queueFor(kind, target);
+        await queue.add(track);
+      }
+      // The unlocked body: this call already holds the lock.
+      await this.flushNow();
+    });
   }
 
   /**
@@ -139,6 +175,10 @@ export class UserQueue extends DurableObject<Env> {
   }
 
   async flush(): Promise<void> {
+    return this.serialize(() => this.flushNow());
+  }
+
+  private async flushNow(): Promise<void> {
     const userId = await this.ctx.storage.get<string>('userId');
     if (!userId) return;
     const targets = await this.loadTargets(userId);
@@ -211,24 +251,33 @@ export class UserQueue extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
-    await this.flush();
+    await this.serialize(() => this.flushNow());
   }
 
-  /** Queue depth per target, for the status page. Carries no track data. */
+  /**
+   * Queue depth per target, for the status page. Carries no track data.
+   *
+   * Serialized like the rest: the dashboard polls this every fifteen seconds, and a read
+   * taken mid-flush reports a backlog that includes plays already accepted.
+   */
   async depth(): Promise<Record<string, number>> {
-    const userId = await this.ctx.storage.get<string>('userId');
-    if (!userId) return {};
-    const targets = await this.loadTargets(userId);
-    const out: Record<string, number> = {};
-    for (const [kind, target] of targets) {
-      out[kind] = (await this.queueFor(kind, target)).size;
-    }
-    return out;
+    return this.serialize(async () => {
+      const userId = await this.ctx.storage.get<string>('userId');
+      if (!userId) return {};
+      const targets = await this.loadTargets(userId);
+      const out: Record<string, number> = {};
+      for (const [kind, target] of targets) {
+        out[kind] = (await this.queueFor(kind, target)).size;
+      }
+      return out;
+    });
   }
 
   async reset(): Promise<void> {
-    await this.ctx.storage.deleteAll();
-    await this.ctx.storage.deleteAlarm();
+    return this.serialize(async () => {
+      await this.ctx.storage.deleteAll();
+      await this.ctx.storage.deleteAlarm();
+    });
   }
 }
 
