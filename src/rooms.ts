@@ -82,14 +82,36 @@ export async function groupPlayerIds(
   }
 }
 
+/** Whether this user has switched any room off at all. */
+export async function hasRoomsSwitchedOff(env: Env, userId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    'SELECT 1 AS present FROM sonos_players WHERE user_id = ? AND scrobble = 0 LIMIT 1'
+  )
+    .bind(userId)
+    .first<{ present: number }>();
+  return row !== null;
+}
+
 /**
  * Whether a group may scrobble, given the rooms in it.
  *
- * Unknown topology means yes. A group whose players we have not recorded yet is a
- * group that was just created, or one carried over from before this table existed, and
- * refusing those would stop scrobbling for a reason no user could see or fix. The
- * failure this feature must avoid is scrobbling a room somebody switched off, and an
- * unrecorded group has no switched-off room in it by definition.
+ * Unknown membership is permitted only for a user who has switched nothing off.
+ *
+ * The rule used to be that unknown membership was always permitted, reasoning that an
+ * unrecorded group has no switched-off room in it by definition. That holds for a group
+ * that was genuinely just created. It does not hold when we simply failed to record the
+ * membership — which is what happened in production: every group carried a null
+ * `player_ids`, two rooms were switched off, and both scrobbled anyway. A setting a
+ * person actually changed was silently ignored, which is the one failure this feature
+ * exists to prevent.
+ *
+ * So the original intent is kept exactly where it applies. Somebody who has never
+ * touched a switch cannot be stopped by this, whatever the topology looks like. Somebody
+ * who has made a choice we cannot currently resolve gets the conservative answer, in
+ * line with this codebase's standing bias: a missing scrobble is a nuisance, a wrong one
+ * corrupts a listening history. It is also self-healing — the next topology sync records
+ * the membership — and `/api/account` reports the condition so the page can say plainly
+ * that a rescan is needed rather than going quiet.
  */
 export async function groupMayScrobble(
   env: Env,
@@ -97,7 +119,7 @@ export async function groupMayScrobble(
   groupId: string
 ): Promise<boolean> {
   const playerIds = await groupPlayerIds(env, userId, groupId);
-  if (!playerIds) return true;
+  if (!playerIds) return !(await hasRoomsSwitchedOff(env, userId));
 
   const placeholders = playerIds.map(() => '?').join(', ');
   const row = await env.DB.prepare(

@@ -14,6 +14,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
+import { log } from '../lib/log.js';
 import { clientForUser } from '../sonos/account.js';
 import { classify, MAX_SONG_MS, type ScrobbleCandidate } from '../sonos/classify.js';
 import type { MetadataStatus, PlaybackStatus } from '../sonos/types.js';
@@ -296,7 +297,7 @@ export class GroupSession extends DurableObject<Env> {
     });
     await this.ctx.storage.delete('hint');
     if (!scrobble) return {};
-    await this.enqueue(scrobble);
+    await this.enqueue(scrobble, nowMs);
     return { scrobbled: scrobble };
   }
 
@@ -309,12 +310,30 @@ export class GroupSession extends DurableObject<Env> {
     return hint.positionMs;
   }
 
-  private async enqueue(scrobble: ScrobbleTrack): Promise<void> {
+  /**
+   * Hands an earned play to the user's queue, and records that it happened.
+   *
+   * The timestamp and the log line live here rather than in the webhook handler because
+   * this is the one place every scrobble passes through. They used to sit in the handler,
+   * which meant they only fired for a play earned by an *incoming event* — and Sonos
+   * sends nothing at all while a track plays normally, so in practice the threshold is
+   * crossed by this object's own alarm. The common path therefore scrobbled in complete
+   * silence: `users.last_scrobble_at` stayed null forever and no log line was written,
+   * so the status page read "Last scrobble: never" over a pipeline that was working.
+   * That is precisely the reading the page exists to make trustworthy.
+   */
+  private async enqueue(scrobble: ScrobbleTrack, nowMs: number): Promise<void> {
     const config = await this.config();
     if (!config) return;
     const queue = this.env.USER_QUEUES.get(this.env.USER_QUEUES.idFromName(config.userId));
     // The queue is durable and dedupes, so a retry that double-delivers is harmless.
     await queue.enqueue(config.userId, scrobble);
+    await this.env.DB.prepare('UPDATE users SET last_scrobble_at = ? WHERE id = ?')
+      .bind(nowMs, config.userId)
+      .run();
+    // Deliberately says that a scrobble happened, not what it was. A log line naming the
+    // track would be exactly the durable record of listening this service does not keep.
+    log(this.env, 'info', 'scrobble.enqueued', { groupId: config.groupId });
   }
 
   /* ----------------------------------------------------------------- alarms */
@@ -421,7 +440,7 @@ export class GroupSession extends DurableObject<Env> {
         session.startedAtUnix,
         session.track.durationMs
       );
-      await this.enqueue(scrobble);
+      await this.enqueue(scrobble, nowMs);
       await this.rescheduleAlarm(nowMs);
       return { scrobbled: scrobble };
     }

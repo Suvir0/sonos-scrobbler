@@ -639,6 +639,15 @@
             'Your rooms were found, but Sonos is not sending playback events yet, so ' +
             'nothing will scrobble. Open Account below and press Rescan rooms. ' +
             (subs.lastError ? `Last error: ${subs.lastError}` : '');
+        } else if (data.roomsNeedRescan) {
+          // A room is switched off and at least one group's membership is unknown, so
+          // that choice cannot be applied and those groups are held rather than
+          // scrobbled. Self-healing on the next topology sync, but a rescan is instant.
+          warning.hidden = false;
+          warning.textContent =
+            'One of your rooms is switched off, but the speakers in a group could not be ' +
+            'identified, so that group is being held rather than scrobbled. Open Account ' +
+            'below and press Rescan rooms to sort it out.';
         } else if (subs.failing > 0) {
           warning.hidden = false;
           warning.textContent =

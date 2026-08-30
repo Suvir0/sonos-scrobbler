@@ -402,6 +402,57 @@ describe('the Sonos webhook', () => {
     });
   });
 
+  /**
+   * The status page's most important reading, over the path that actually produces it.
+   *
+   * Sonos sends nothing while a track plays normally, so a scrobble is almost always
+   * earned by the Durable Object's alarm rather than by an incoming event. The timestamp
+   * and the log line used to live in the webhook handler, so that path recorded nothing:
+   * "Last scrobble: never" over a pipeline delivering plays correctly, which is exactly
+   * the reading an operator would act on.
+   */
+  it('records a scrobble earned by the alarm, not only one earned by an event', async () => {
+    const before = await env.DB.prepare('SELECT last_scrobble_at FROM users WHERE id = ?')
+      .bind(USER_ID)
+      .first<{ last_scrobble_at: number | null }>();
+    expect(before?.last_scrobble_at).toBeNull();
+
+    // A four-minute track, started, and then the silence Sonos really sends.
+    await postEvent('playbackMetadata', 'metadataStatus', {
+      container: { type: 'album', service: { name: 'Acme Music' } },
+      currentItem: {
+        track: {
+          type: 'track',
+          name: 'Come Down',
+          artist: { name: 'Anderson .Paak' },
+          id: { objectId: 'song:come-down' },
+          service: { name: 'Acme Music' },
+          durationMillis: 240_000
+        }
+      }
+    });
+    await postEvent('playback', 'playbackStatus', {
+      playbackState: 'PLAYBACK_STATE_PLAYING',
+      positionMillis: 0
+    });
+
+    const stub = env.GROUP_SESSIONS.get(
+      env.GROUP_SESSIONS.idFromName(groupSessionName(USER_ID, GROUP_ID))
+    );
+    await vi.waitFor(async () => {
+      expect((await stub.snapshot())?.track?.track).toBe('Come Down');
+    });
+
+    // Past the halfway point, on the object's own clock — no further event arrives.
+    const outcome = await stub.tick(Date.now() + 130_000);
+    expect(outcome.scrobbled?.track).toBe('Come Down');
+
+    const after = await env.DB.prepare('SELECT last_scrobble_at FROM users WHERE id = ?')
+      .bind(USER_ID)
+      .first<{ last_scrobble_at: number | null }>();
+    expect(after?.last_scrobble_at).toBeGreaterThan(0);
+  });
+
   it('ignores an event with no signature header', async () => {
     const response = await SELF.fetch('https://example.com/webhooks/sonos', {
       method: 'POST',

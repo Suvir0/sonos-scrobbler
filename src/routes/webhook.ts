@@ -212,15 +212,9 @@ async function deliver(
     await queue.announce(row.user_id, outcome.nowPlaying).catch(() => undefined);
   }
 
-  // Deliberately logs that a scrobble happened, not what it was. A log line naming the
-  // track would be exactly the durable record of listening this service promises not
-  // to keep.
-  if (outcome.scrobbled) {
-    await env.DB.prepare('UPDATE users SET last_scrobble_at = ? WHERE id = ?')
-      .bind(nowMs, row.user_id)
-      .run();
-    log(env, 'info', 'scrobble.enqueued', { groupId: targetId });
-  }
+  // Nothing here records the scrobble. `GroupSession.enqueue` does, because it is the
+  // one place every earned play passes through — including the alarm-driven one, which
+  // never reaches this function at all.
   if (outcome.declined) log(env, 'info', 'scrobble.declined', {
     groupId: targetId,
     reason: outcome.declined
