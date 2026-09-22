@@ -6,6 +6,8 @@ import {
   LastfmClient,
   LastfmError,
   readScrobbleResult,
+  readTopTracks,
+  readTrackMatches,
   signParameters
 } from './lastfm-client.js';
 
@@ -282,5 +284,101 @@ describe('authorizationUrl', () => {
     expect(authorizationUrl('KEY', 'TOK EN')).toBe(
       'https://www.last.fm/api/auth/?api_key=KEY&token=TOK%20EN'
     );
+  });
+});
+
+describe('catalogue lookups', () => {
+  /** Captures the URL of each GET and replies with the supplied JSON. */
+  function stubGet(body: unknown, status = 200) {
+    const urls: URL[] = [];
+    const fetchStub = vi.fn(async (url: unknown, init: RequestInit | undefined) => {
+      urls.push(new URL(String(url)));
+      expect(init?.method).toBe('GET');
+      return { ok: status < 400, status, json: async () => body } as Response;
+    });
+    return { fetchStub: fetchStub as unknown as typeof fetch, urls };
+  }
+
+  const searchBody = {
+    results: {
+      trackmatches: {
+        track: [
+          { name: 'Come Down (Remix)', artist: 'Anderson .Paak', listeners: '1200' },
+          { name: 'Come Down', artist: 'Anderson .Paak', listeners: '345678' },
+          { name: 'broken', artist: 7 },
+          { artist: 'No Name' }
+        ]
+      }
+    }
+  };
+
+  it('searches by artist and title with the key alone, unsigned', async () => {
+    const { fetchStub, urls } = stubGet(searchBody);
+    const client = new LastfmClient({ apiKey: 'KEY', apiSecret: 'SECRET' }, { fetch: fetchStub });
+
+    const matches = await client.searchTracks('Anderson .Paak', 'Come Down');
+
+    const query = urls[0]?.searchParams;
+    expect(urls[0]?.origin).toBe('https://ws.audioscrobbler.com');
+    expect(query?.get('method')).toBe('track.search');
+    expect(query?.get('artist')).toBe('Anderson .Paak');
+    expect(query?.get('track')).toBe('Come Down');
+    expect(query?.get('api_key')).toBe('KEY');
+    expect(query?.get('format')).toBe('json');
+    expect(query?.has('api_sig')).toBe(false);
+    expect(query?.has('sk')).toBe(false);
+    // Malformed rows are dropped rather than thrown; listeners become numbers.
+    expect(matches).toEqual([
+      { name: 'Come Down (Remix)', artist: 'Anderson .Paak', listeners: 1200 },
+      { name: 'Come Down', artist: 'Anderson .Paak', listeners: 345_678 }
+    ]);
+  });
+
+  it('reads the top-tracks shape, whose artist is nested', async () => {
+    const { fetchStub, urls } = stubGet({
+      toptracks: {
+        track: [{ name: 'Come Down', artist: { name: 'Anderson .Paak' }, listeners: '345678' }]
+      }
+    });
+    const client = new LastfmClient({ apiKey: 'KEY', apiSecret: 'SECRET' }, { fetch: fetchStub });
+
+    const tracks = await client.topTracks('Anderson .Paak');
+
+    expect(urls[0]?.searchParams.get('method')).toBe('artist.gettoptracks');
+    expect(urls[0]?.searchParams.get('artist')).toBe('Anderson .Paak');
+    expect(tracks).toEqual([{ name: 'Come Down', artist: 'Anderson .Paak', listeners: 345_678 }]);
+  });
+
+  it('reads a single match delivered as an object rather than a list', () => {
+    expect(
+      readTrackMatches({ results: { trackmatches: { track: { name: 'Only', artist: 'One' } } } })
+    ).toEqual([{ name: 'Only', artist: 'One' }]);
+    expect(readTopTracks({ toptracks: { track: { name: 'Only', artist: { name: 'One' } } } })).toEqual([
+      { name: 'Only', artist: 'One' }
+    ]);
+  });
+
+  it('reads nothing out of a missing or malformed body', () => {
+    expect(readTrackMatches(undefined)).toEqual([]);
+    expect(readTrackMatches({})).toEqual([]);
+    expect(readTrackMatches({ results: { trackmatches: 'nope' } })).toEqual([]);
+    expect(readTopTracks(undefined)).toEqual([]);
+    expect(readTopTracks({ toptracks: { track: [{ name: 'x', artist: 'flat' }] } })).toEqual([]);
+  });
+
+  it('returns nothing on a failing status, and never throws', async () => {
+    const { fetchStub } = stubGet({ error: 29, message: 'Rate limit exceeded' }, 429);
+    const client = new LastfmClient({ apiKey: 'KEY', apiSecret: 'SECRET' }, { fetch: fetchStub });
+    await expect(client.searchTracks('a', 'b')).resolves.toEqual([]);
+    await expect(client.topTracks('a')).resolves.toEqual([]);
+
+    const failing = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const offline = new LastfmClient(
+      { apiKey: 'KEY', apiSecret: 'SECRET' },
+      { fetch: failing as unknown as typeof fetch }
+    );
+    await expect(offline.searchTracks('a', 'b')).resolves.toEqual([]);
   });
 });

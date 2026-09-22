@@ -71,6 +71,15 @@ export interface ScrobbleCandidate {
   objectId?: string;
   serviceName?: string;
   isRadio: boolean;
+  /**
+   * The whole title, when the speaker reported only the start of it.
+   *
+   * Sonos cuts long titles at a byte limit and says nothing about having done so; see
+   * `scrobble/title-completion.ts`. `track` stays as reported, because that is what
+   * every later event for the same play will say again and what identity is compared
+   * on. This is what gets scrobbled and announced.
+   */
+  fullTitle?: string;
 }
 
 export type Classification =

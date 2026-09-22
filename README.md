@@ -141,6 +141,14 @@ Not from this. Every play is checked against what's already been sent before it 
 you also scrobble from the Spotify app on your phone and cast to a Sonos, leave *Music
 cast from an app* switched off and Spotify will handle those.
 
+**Do long song titles come through whole?**
+Not from Sonos, they don't. The speaker reports roughly the first hundred bytes of a
+title — about sixty over Spotify Connect — and nothing marks that it did, so scrobbled
+as-is that stub becomes a song of its own on Last.fm. When a title is long enough to have
+been cut, the service asks Last.fm's catalogue which titles by that artist begin with
+exactly what the speaker sent, and scrobbles that one. It never swaps in a different
+song, and a title Last.fm already knows in full is left alone.
+
 **Two of us share the house — can we both use it?**
 Yes. You each connect your own Sonos account and each get your own history. When you're
 both listening to the same speaker, you both get the scrobble.
@@ -404,6 +412,7 @@ itself, since that is the invariant the test depends on.
 | `src/scrobble/rules.ts` | Last.fm's thresholds |
 | `src/scrobble/queue.ts` | durable queue with backoff, batch bisection, hashed dedupe |
 | `src/scrobble/{lastfm,listenbrainz}-client.ts` | the two targets |
+| `src/scrobble/title-completion.ts` | recovering a title Sonos cut short, from Last.fm's catalogue |
 | `src/sonos/classify.ts` | what is music and what is a podcast, TV or unparseable radio |
 | `src/sonos/events.ts` | signature verification and the replay guard |
 | `src/sonos/{oauth,account,client}.ts` | authorization, token refresh, Control API |

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+**A long title is no longer scrobbled as the start of itself.** Sonos cuts long titles
+short and says nothing about having done so. Reported from Reddit against Spotify
+Connect, where a 149-byte Thai title reached Last.fm as its first 62 bytes, and
+reproduced here on a real player from Apple Music, where the same song's title arrived
+through the Control API as its first 99 bytes — a different limit for a different path,
+but a hard cut at a byte count either way. There is no second field carrying the rest,
+and nothing in the payload marks the cut, so the service submitted the stub as a title
+of its own and Last.fm filed every such play under a song nobody has ever heard of.
+
+The rest of the title is now recovered from Last.fm's catalogue, which already holds the
+whole thing for anything ever scrobbled from the app that plays it. Only a title long
+enough to have hit one of the observed limits is looked up — 56 bytes of UTF-8 and up,
+which keeps the lookup away from nearly every play — and the answer is only believed
+when it is by the same artist and begins with exactly what the speaker reported. A
+title Last.fm already knows in full is left alone, so a long title that is genuinely
+complete cannot be "completed" into a remix of itself. The lookup runs once, when the
+track starts, with the service's own API key, so ListenBrainz-only accounts get it too;
+if it fails or finds nothing the play goes out under the reported title, as before.
+The stub stays as the track's identity, because that is what every later event for the
+same play repeats — a metadata refresh mid-song neither restarts the clock nor loses
+the recovered title.
+
+Album names are cut the same way and are not recovered: the catalogue lookups that give
+a title do not carry one, and an album is a detail on a scrobble where the title is the
+scrobble.
+
 **The page now says when something else is scrobbling your account.** Two writers on
 one Last.fm account both submit the same plays, and because each stamps a scrobble
 with "now, minus how far into the track it was", their answers differ by a second or

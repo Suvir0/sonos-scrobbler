@@ -1,5 +1,5 @@
-import { env } from 'cloudflare:test';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { env, runInDurableObject } from 'cloudflare:test';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshDatabase } from '../testing/schema.js';
 import { sessionOf } from '../testing/replay.js';
 import {
@@ -346,5 +346,99 @@ describe('two events for one track change, arriving together', () => {
     );
     // And the session really is gone, rather than left behind for the next alarm.
     expect(await sessionOf(stub)).toBeUndefined();
+  });
+});
+
+describe('a title Sonos cut short', () => {
+  beforeEach(freshDatabase);
+
+  // What a real speaker reported for this song over Spotify Connect: the first 62 bytes
+  // of a 149-byte title. Scrobbled as-is, Last.fm files it under a song of its own.
+  const CUT = 'ขอมากไปไหม (Too Much) - From Rearrange The';
+  const FULL = 'ขอมากไปไหม (Too Much) - From Rearrange The Series ขอฟังอีกครั้ง เพลงรักของเธอ';
+  const LONG = { artist: 'TimeLied', title: CUT, album: CUT, durationMs: 200_000 };
+
+  /** A configured session whose catalogue is scripted rather than Last.fm. */
+  async function withCompleter(completer: (track: { artist: string; track: string }) => Promise<string | undefined>) {
+    const stub = await configured();
+    await runInDurableObject(stub, async (instance) => {
+      instance.titleCompleter = completer;
+    });
+    return stub;
+  }
+
+  it('scrobbles and announces the whole title', async () => {
+    const completer = vi.fn(async () => FULL);
+    const result = await replay(await withCompleter(completer), [
+      trackStart(0, LONG),
+      trackStart(200_000, NEXT, 199_000)
+    ]);
+    expect(timesScrobbled(result, FULL)).toBe(1);
+    expect(timesScrobbled(result, CUT)).toBe(0);
+    expect(result.nowPlaying[0]).toEqual({ artist: 'TimeLied', track: FULL });
+    expect(completer).toHaveBeenCalledTimes(1);
+    expect(completer).toHaveBeenCalledWith({ artist: 'TimeLied', track: CUT });
+  });
+
+  it('scrobbles the whole title when the play closes on a track change', async () => {
+    // The other submission path: the next track's playbackStatus carries the outgoing
+    // final position and the play is earned in `finalize` rather than by the alarm.
+    const result = await replay(await withCompleter(async () => FULL), [
+      trackStart(0, LONG),
+      trackStart(99_000, NEXT, 150_000)
+    ]);
+    expect(timesScrobbled(result, FULL)).toBe(1);
+    expect(timesScrobbled(result, CUT)).toBe(0);
+  });
+
+  it('keeps what Sonos reported when the catalogue has no answer', async () => {
+    const result = await replay(await withCompleter(async () => undefined), [
+      trackStart(0, LONG),
+      trackStart(200_000, NEXT, 199_000)
+    ]);
+    expect(timesScrobbled(result, CUT)).toBe(1);
+    expect(result.nowPlaying[0]).toEqual({ artist: 'TimeLied', track: CUT });
+  });
+
+  it('keeps what Sonos reported when the lookup fails, and loses nothing', async () => {
+    const result = await replay(
+      await withCompleter(async () => {
+        throw new Error('Last.fm is down');
+      }),
+      [trackStart(0, LONG), trackStart(200_000, NEXT, 199_000)]
+    );
+    expect(timesScrobbled(result, CUT)).toBe(1);
+    expect(timesScrobbled(result, 'Silicon Valley')).toBe(1);
+  });
+
+  it('does not ask about a title too short to have been cut', async () => {
+    const completer = vi.fn(async () => 'Come Down (Remix)');
+    const result = await replay(await withCompleter(completer), [
+      trackStart(0, SONG),
+      trackStart(180_000, NEXT, 179_000)
+    ]);
+    expect(completer).not.toHaveBeenCalled();
+    expect(timesScrobbled(result, 'Come Down')).toBe(1);
+  });
+
+  it('survives a metadata refresh repeating the cut title', async () => {
+    // The refresh names the same stub the speaker sent first. It must neither restart
+    // the clock, nor discard the recovered title, nor cost a second lookup.
+    const completer = vi.fn(async () => FULL);
+    const result = await replay(await withCompleter(completer), [
+      trackStart(0, LONG),
+      { at: 45_000, metadata: metadataFor(LONG) },
+      trackStart(200_000, NEXT, 199_000)
+    ]);
+    expect(timesScrobbled(result, FULL)).toBe(1);
+    expect(timesScrobbled(result, CUT)).toBe(0);
+    expect(result.nowPlaying).toHaveLength(2);
+    expect(completer).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the whole title on the now-playing panel', async () => {
+    const stub = await withCompleter(async () => FULL);
+    await replay(stub, [trackStart(0, LONG)], { tailMs: 0 });
+    expect((await stub.snapshot())?.track?.track).toBe(FULL);
   });
 });
