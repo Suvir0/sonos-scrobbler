@@ -17,6 +17,7 @@ import { USER_AGENT } from '../lib/identity.js';
 import { md5 } from '../lib/md5.js';
 import { withTimeout } from '../lib/timeout.js';
 import type { RecentScrobble } from './foreign.js';
+import type { CatalogueTrack } from './title-completion.js';
 import {
   SubmissionError,
   type NowPlayingTrack,
@@ -200,16 +201,56 @@ export class LastfmClient implements ScrobbleTarget {
   async recentScrobbles(limit = 20): Promise<RecentScrobble[]> {
     const user = this.credentials.username;
     if (!user) return [];
+    const body = await this.publicGet({
+      method: 'user.getrecenttracks',
+      user,
+      limit: String(limit)
+    });
+    return readRecentTracks(body);
+  }
 
+  /**
+   * Tracks matching an artist and a title, as Last.fm ranks them.
+   *
+   * Public and unsigned like `recentScrobbles`, and total in the same way: any failure
+   * is an empty list. The caller is a lookup for a title Sonos cut short, and a play
+   * must never be lost because a lookup for its spelling failed.
+   */
+  async searchTracks(artist: string, track: string, limit = 30): Promise<CatalogueTrack[]> {
+    const body = await this.publicGet({
+      method: 'track.search',
+      artist,
+      track,
+      limit: String(limit)
+    });
+    return readTrackMatches(body);
+  }
+
+  /** An artist's tracks by listener count, most popular first. Total, as above. */
+  async topTracks(artist: string, limit = 200): Promise<CatalogueTrack[]> {
+    const body = await this.publicGet({
+      method: 'artist.gettoptracks',
+      artist,
+      limit: String(limit)
+    });
+    return readTopTracks(body);
+  }
+
+  /**
+   * An unsigned, unauthenticated GET against a public method.
+   *
+   * Needs the API key and nothing else. Returns undefined on any failure — a non-2xx
+   * status, a timeout, unparseable JSON — because every caller is a lookup that must
+   * degrade to "no answer" rather than fail whatever asked.
+   */
+  private async publicGet(parameters: Readonly<Record<string, string>>): Promise<unknown> {
     const url = new URL(LASTFM_ENDPOINT);
-    url.searchParams.set('method', 'user.getrecenttracks');
-    url.searchParams.set('user', user);
+    for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
     url.searchParams.set('api_key', this.credentials.apiKey);
-    url.searchParams.set('limit', String(limit));
     url.searchParams.set('format', 'json');
 
     try {
-      const body = await withTimeout(this.dependencies.timeoutMs, async (signal) => {
+      return await withTimeout(this.dependencies.timeoutMs, async (signal) => {
         const response = await this.dependencies.fetch(url.toString(), {
           method: 'GET',
           headers: { 'User-Agent': USER_AGENT },
@@ -218,9 +259,8 @@ export class LastfmClient implements ScrobbleTarget {
         if (!response.ok) return undefined;
         return (await response.json()) as unknown;
       });
-      return readRecentTracks(body);
     } catch {
-      return [];
+      return undefined;
     }
   }
 
@@ -384,6 +424,45 @@ export function readRecentTracks(body: unknown): RecentScrobble[] {
     const uts = Number(row.date?.uts);
     if (!track || !artist || !Number.isFinite(uts)) continue;
     out.push({ artist, track, timestamp: uts });
+  }
+  return out;
+}
+
+/**
+ * Reads the matches out of a `track.search` body.
+ *
+ * The artist is a plain string here where `artist.getTopTracks` nests it, and a single
+ * match can arrive as an object rather than a one-element array. Total like every other
+ * parser here: anything malformed is dropped rather than thrown.
+ */
+export function readTrackMatches(body: unknown): CatalogueTrack[] {
+  const tracks = (body as { results?: { trackmatches?: { track?: unknown } } })?.results
+    ?.trackmatches?.track;
+  return readCatalogue(tracks, (row) => (typeof row.artist === 'string' ? row.artist : undefined));
+}
+
+/** Reads the tracks out of an `artist.getTopTracks` body. */
+export function readTopTracks(body: unknown): CatalogueTrack[] {
+  const tracks = (body as { toptracks?: { track?: unknown } })?.toptracks?.track;
+  return readCatalogue(tracks, (row) => {
+    const artist = row.artist as { name?: unknown } | undefined;
+    return typeof artist?.name === 'string' ? artist.name : undefined;
+  });
+}
+
+function readCatalogue(
+  tracks: unknown,
+  artistOf: (row: { artist?: unknown }) => string | undefined
+): CatalogueTrack[] {
+  const entries = Array.isArray(tracks) ? tracks : tracks ? [tracks] : [];
+  const out: CatalogueTrack[] = [];
+  for (const entry of entries) {
+    const row = entry as { name?: unknown; artist?: unknown; listeners?: unknown };
+    const name = typeof row.name === 'string' ? row.name : undefined;
+    const artist = artistOf(row);
+    if (!name || !artist) continue;
+    const listeners = Number(row.listeners);
+    out.push({ artist, name, ...(Number.isFinite(listeners) ? { listeners } : {}) });
   }
   return out;
 }

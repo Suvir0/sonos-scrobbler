@@ -157,6 +157,18 @@ export function identityOf(track: ScrobbleCandidate): TrackIdentity {
   return identity;
 }
 
+/**
+ * The identity a play is *scrobbled* under, as opposed to matched on.
+ *
+ * The one difference is the title: a track Sonos cut short is matched on the stub the
+ * speaker keeps reporting and scrobbled under the whole title recovered for it.
+ */
+export function scrobbleIdentityOf(track: ScrobbleCandidate): TrackIdentity {
+  const identity = identityOf(track);
+  if (track.fullTitle) identity.track = track.fullTitle;
+  return identity;
+}
+
 export function isSameSessionTrack(session: PlaySession, track: ScrobbleCandidate): boolean {
   return isSameTrack(identityOf(session.track), identityOf(track));
 }
@@ -204,7 +216,7 @@ export function finalize(
 
   return {
     scrobble: toScrobbleTrack(
-      identityOf(closed.track),
+      scrobbleIdentityOf(closed.track),
       closed.startedAtUnix,
       closed.track.durationMs
     ),

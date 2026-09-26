@@ -89,7 +89,12 @@
         <h2>Who it is shared with</h2>
         <p>
           Only the services you connected. Plays go to Last.fm and ListenBrainz because that is
-          what you asked for. Nothing is sold, and no page here loads analytics, advertising
+          what you asked for. One lookup goes out besides: Sonos cuts long song titles short
+          without saying so, and when a speaker reports a title long enough for that to have
+          happened, the service asks Last.fm's public catalogue which titles by that artist
+          begin with what the speaker sent. That request carries the artist, the reported
+          title and this service's own API key, and nothing that identifies you. It is made
+          whether or not you connected Last.fm. Nothing is sold, and no page here loads analytics, advertising
           or any third-party script. The content security policy this site sends forbids
           loading one. The two typefaces are served from this domain rather than from a font
           CDN, because a webfont request carries your IP address and the page you are reading

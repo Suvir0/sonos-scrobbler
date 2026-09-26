@@ -24,15 +24,17 @@ import {
   finalize,
   hasEarnedScrobble,
   isSameSessionTrack,
-  identityOf,
   listenedMsAt,
   scrobbleDueAtMs,
+  scrobbleIdentityOf,
   shouldRefreshNowPlaying,
   startSession,
   type PlaySession
 } from '../scrobble/session.js';
 import { toScrobbleTrack } from '../scrobble/rules.js';
 import type { ScrobbleTrack } from '../scrobble/target.js';
+import { LastfmClient } from '../scrobble/lastfm-client.js';
+import { completeTitle, mayBeTruncated, utf8Length } from '../scrobble/title-completion.js';
 
 /**
  * How long to wait for the `playbackStatus` that accompanies a track change.
@@ -55,6 +57,16 @@ const BACKSTOP_SLACK_MS = 30_000;
 
 /** How stale a `previousPositionMillis` reading may be before it is ignored. */
 const HINT_FRESHNESS_MS = 10_000;
+
+/**
+ * How long a lookup for a cut-short title may take.
+ *
+ * It runs inside the serialized event path, so a slow Last.fm holds up the next event
+ * for this group for at most this long. Well under the fifteen seconds the client
+ * allows for a scrobble, because a scrobble is worth waiting for and a spelling is
+ * not: on timeout the play goes out under the title Sonos reported.
+ */
+const TITLE_LOOKUP_TIMEOUT_MS = 5_000;
 
 /**
  * How many times one session may reconcile before giving up.
@@ -122,6 +134,25 @@ export class GroupSession extends DurableObject<Env> {
    * instance per id: there is no second copy of this field to race against.
    */
   private inFlight: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Recovers the whole title for one Sonos reported only the start of.
+   *
+   * A field rather than a method so a test can replace it: `runInDurableObject` hands a
+   * test the live instance, and this is the one place in the object that reaches a
+   * service other than Sonos. The default asks Last.fm's catalogue with the service's
+   * own key, so it works for a ListenBrainz-only account too.
+   */
+  titleCompleter: (track: { artist: string; track: string }) => Promise<string | undefined> = (
+    track
+  ) =>
+    completeTitle(
+      new LastfmClient(
+        { apiKey: this.env.LASTFM_API_KEY, apiSecret: this.env.LASTFM_API_SECRET },
+        { timeoutMs: TITLE_LOOKUP_TIMEOUT_MS }
+      ),
+      track
+    );
 
   /**
    * Runs one event at a time.
@@ -290,7 +321,10 @@ export class GroupSession extends DurableObject<Env> {
     // A metadata refresh for the track already playing — artwork arriving late, an
     // album name filling in. Update the details without disturbing the clock.
     if (current && isSameSessionTrack(current, result.candidate)) {
-      await this.ctx.storage.put('session', { ...current, track: result.candidate });
+      await this.ctx.storage.put('session', {
+        ...current,
+        track: await this.refreshed(current.track, result.candidate)
+      });
       await this.rescheduleAlarm(nowMs);
       return {};
     }
@@ -324,7 +358,7 @@ export class GroupSession extends DurableObject<Env> {
     await this.ctx.storage.delete('pending');
     const outcome = current ? await this.finalizeCurrent(current, input.nowMs) : {};
 
-    const started = startSession(pending.track, input);
+    const started = startSession(await this.withFullTitle(pending.track), input);
     await this.ctx.storage.put('session', started);
     await this.ctx.storage.delete('hint');
     // A new track gets a fresh reconcile allowance; the cap bounds one stuck session,
@@ -373,6 +407,46 @@ export class GroupSession extends DurableObject<Env> {
     await this.ctx.storage.put('session', closed);
     await this.enqueue(scrobble, nowMs);
     return { scrobbled: scrobble };
+  }
+
+  /**
+   * The candidate with its whole title attached, when the reported one was cut short.
+   *
+   * Nothing here can fail a play: a lookup that errors, times out or finds nothing
+   * leaves the candidate exactly as Sonos reported it.
+   */
+  private async withFullTitle(track: ScrobbleCandidate): Promise<ScrobbleCandidate> {
+    if (!mayBeTruncated(track.track)) return track;
+    let full: string | undefined;
+    try {
+      full = await this.titleCompleter({ artist: track.artist, track: track.track });
+    } catch {
+      return track;
+    }
+    if (!full || full === track.track) return track;
+    // Lengths only. The title itself is content, and a log line is a record.
+    log(this.env, 'info', 'title.completed', {
+      reportedBytes: utf8Length(track.track),
+      fullBytes: utf8Length(full)
+    });
+    return { ...track, fullTitle: full };
+  }
+
+  /**
+   * A metadata refresh, keeping a recovered title the refresh would otherwise discard.
+   *
+   * The refresh repeats the cut title — it is the same event Sonos sent the first time,
+   * with artwork or an album filled in — so what was already decided about it stands,
+   * whichever way it went. Only a title that actually changed is looked up afresh.
+   */
+  private async refreshed(
+    current: ScrobbleCandidate,
+    fresh: ScrobbleCandidate
+  ): Promise<ScrobbleCandidate> {
+    if (fresh.track === current.track) {
+      return current.fullTitle ? { ...fresh, fullTitle: current.fullTitle } : fresh;
+    }
+    return this.withFullTitle(fresh);
   }
 
   private async freshHint(nowMs: number): Promise<number | undefined> {
@@ -514,7 +588,7 @@ export class GroupSession extends DurableObject<Env> {
         submitted: true
       });
       const scrobble = toScrobbleTrack(
-        identityOf(session.track),
+        scrobbleIdentityOf(session.track),
         session.startedAtUnix,
         session.track.durationMs
       );
@@ -596,14 +670,20 @@ export class GroupSession extends DurableObject<Env> {
   async snapshot(): Promise<{ track?: ScrobbleCandidate; playing: boolean } | undefined> {
     const session = await this.session();
     if (!session) return undefined;
-    return { track: session.track, playing: session.playing };
+    // The panel shows what will be scrobbled, which is the whole title where one was
+    // recovered, not the stub the speaker reported.
+    const track = session.track;
+    return {
+      track: { ...track, track: track.fullTitle ?? track.track },
+      playing: session.playing
+    };
   }
 }
 
 function nowPlayingOf(track: ScrobbleCandidate): { artist: string; track: string; album?: string } {
   const out: { artist: string; track: string; album?: string } = {
     artist: track.artist,
-    track: track.track
+    track: track.fullTitle ?? track.track
   };
   if (track.album) out.album = track.album;
   return out;
