@@ -248,6 +248,91 @@ describe('classify', () => {
     it('does not mistake a named service for handoff', () => {
       expect(looksLikeHandoff(musicTrack())).toBe(false);
     });
+
+    // The rest are shapes a real Era 100 reported, trimmed of images and `_objectType`.
+    const spotifyConnect: MetadataStatus = {
+      container: {
+        name: 'Liked Songs',
+        type: 'collection.spotify.connect',
+        id: { serviceId: '12', objectId: 'spotify:user:someone:collection' },
+        service: { name: 'Spotify', id: '12' }
+      },
+      currentItem: {
+        track: {
+          type: 'track',
+          name: 'Lady Of Namek',
+          album: { name: 'Alone At Prom' },
+          artist: { name: 'Tory Lanez' },
+          id: { serviceId: '12', objectId: 'spotify:track:6ieWL5CLN9WdC875guWtMe' },
+          service: { name: 'Spotify', id: '12' },
+          durationMillis: 194_000
+        }
+      },
+      playbackSession: { clientId: 'spotify.connect.adapter', isSuspended: false, accountId: '' }
+    };
+
+    it('declines Spotify Connect, which names Spotify as its service', () => {
+      expect(classify(spotifyConnect)).toEqual({ scrobbleable: false, reason: 'handoff-source' });
+    });
+
+    it('accepts Spotify Connect when opted in', () => {
+      const result = classify(spotifyConnect, { allowHandoff: true });
+      expect(result.scrobbleable && result.candidate.serviceName).toBe('Spotify');
+    });
+
+    it('declines the empty event Spotify Connect opens with', () => {
+      const opening: MetadataStatus = {
+        container: { type: 'spotify.connect', service: { id: '0' } },
+        currentItem: { track: { type: 'track' } },
+        playbackSession: { clientId: 'spotify.connect.adapter' }
+      };
+      expect(classify(opening)).toEqual({ scrobbleable: false, reason: 'handoff-source' });
+    });
+
+    it.each(['playlist.spotify.connect', 'album.spotify.connect'])(
+      'declines Spotify Connect playing from a %s',
+      (type) => {
+        const status = { ...spotifyConnect, container: { ...spotifyConnect.container, type } };
+        expect(looksLikeHandoff(status)).toBe(true);
+      }
+    );
+
+    it('declines Spotify Connect on the client id alone', () => {
+      const { container: _container, ...rest } = spotifyConnect;
+      expect(looksLikeHandoff({ ...rest, container: { service: { name: 'Spotify' } } })).toBe(true);
+    });
+
+    it('declines AirPlay', () => {
+      // Sonos names a service for this too — "Airplay" — so it slipped past the
+      // missing-service check exactly as Spotify Connect did.
+      const airplay: MetadataStatus = {
+        container: { type: 'linein.airplay', service: { name: 'Airplay' } },
+        currentItem: { track: { type: 'track', name: 'Some Song', artist: { name: 'Someone' } } },
+        playbackSession: { clientId: 'com.sonos.airplay' }
+      };
+      expect(classify(airplay)).toEqual({ scrobbleable: false, reason: 'handoff-source' });
+    });
+
+    it('does not mistake Apple Music started from the Sonos app for handoff', () => {
+      // No container type at all, which is why the absence of one was never the signal.
+      const native: MetadataStatus = {
+        container: {
+          id: { serviceId: '204', objectId: 'song:1065681770', accountId: 'sn_19' },
+          service: { name: 'Apple Music', id: '204' }
+        },
+        currentItem: {
+          track: {
+            type: 'track',
+            name: 'Come Down',
+            artist: { name: 'Anderson .Paak' },
+            id: { serviceId: '204', objectId: 'song:1065681770', accountId: 'sn_19' },
+            service: { name: 'Apple Music', id: '204' },
+            durationMillis: 169_000
+          }
+        }
+      };
+      expect(classify(native).scrobbleable).toBe(true);
+    });
   });
 });
 

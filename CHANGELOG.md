@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+**"Music cast from an app" now actually stops Spotify Connect and AirPlay.** Reported
+from Reddit: with the switch off, plays cast to a Sonos over Spotify Connect were
+scrobbled here anyway, and then Spotify's own Last.fm link submitted the same plays
+again, days later, in one batch, the next time the phone played something locally.
+Every one of those days ended up in the history twice.
+
+The switch decided what a cast was by the absence of a music service, on the theory
+that a handoff stream has nowhere to get a service name from. Real speakers say
+otherwise. Reproduced on an Era 100 through the same Control API the webhooks carry:
+Spotify Connect names Spotify as its service, just as a native service names itself, and
+AirPlay names a service called "Airplay". Neither ever matched, so the switch
+had stopped nothing it was written for. What does mark a cast is the container type —
+`playlist.spotify.connect`, `collection.spotify.connect`, `linein.airplay` — and, over
+Spotify Connect, a playback session driven by `spotify.connect.adapter`. Those decide it
+now. Over repeated casts from Liked Songs, two playlists, a skip mid-cast and an AirPlay
+stream, every event the old rule scrobbled is declined, and the same songs started from
+the Sonos app still scrobble.
+
+Turning the switch on keeps the old behaviour for anyone who relies on this service for
+their Spotify Connect plays because Spotify's own scrobbling is off.
+
 **A long title is no longer scrobbled as the start of itself.** Sonos cuts long titles
 short and says nothing about having done so. Reported from Reddit against Spotify
 Connect, where a 149-byte Thai title reached Last.fm as its first 62 bytes, and
