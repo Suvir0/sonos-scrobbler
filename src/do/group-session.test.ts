@@ -1,6 +1,7 @@
 import { env, runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshDatabase } from '../testing/schema.js';
+import type { MetadataStatus } from '../sonos/types.js';
 import { sessionOf } from '../testing/replay.js';
 import {
   idle,
@@ -440,5 +441,69 @@ describe('a title Sonos cut short', () => {
     const stub = await withCompleter(async () => FULL);
     await replay(stub, [trackStart(0, LONG)], { tailMs: 0 });
     expect((await stub.snapshot())?.track?.track).toBe(FULL);
+  });
+});
+
+describe('music cast to the speaker from an app', () => {
+  beforeEach(freshDatabase);
+
+  // What a real Era 100 reported over Spotify Connect, trimmed of images and
+  // `_objectType`. Sonos names the service, so "no service anywhere" never matched it
+  // and the play was scrobbled with the switch off. Spotify's own Last.fm link then
+  // submitted the same plays from its cache the next time the phone played locally.
+  function spotifyConnect(spec: { artist: string; title: string; album: string; durationMs: number }): MetadataStatus {
+    return {
+      container: {
+        name: 'Liked Songs',
+        type: 'collection.spotify.connect',
+        id: { serviceId: '12', objectId: 'spotify:user:someone:collection', accountId: 'sn_13' },
+        service: { name: 'Spotify', id: '12' }
+      },
+      currentItem: {
+        track: {
+          type: 'track',
+          name: spec.title,
+          album: { name: spec.album },
+          artist: { name: spec.artist },
+          id: { serviceId: '12', objectId: `spotify:track:${spec.title}`, accountId: 'sn_13' },
+          service: { name: 'Spotify', id: '12' },
+          durationMillis: spec.durationMs
+        }
+      },
+      playbackSession: { clientId: 'spotify.connect.adapter', isSuspended: false, accountId: '' }
+    };
+  }
+
+  const castSteps = (): Step[] => [
+    { at: 0, metadata: spotifyConnect(SONG), playback: playing(0) },
+    { at: 180_000, metadata: spotifyConnect(NEXT), playback: playing(0, 179_000) }
+  ];
+
+  it('does not scrobble Spotify Connect while the switch is off', async () => {
+    const result = await replay(await configured(), castSteps());
+    expect(result.scrobbles).toHaveLength(0);
+    expect(result.nowPlaying).toHaveLength(0);
+  });
+
+  it('scrobbles Spotify Connect once the switch is on', async () => {
+    const stub = session();
+    await stub.initialize({
+      userId: 'u1',
+      householdId: 'HH_1',
+      groupId: GROUP,
+      allowRadio: true,
+      allowHandoff: true
+    });
+    const result = await replay(stub, castSteps());
+    expect(timesScrobbled(result, 'Come Down')).toBe(1);
+  });
+
+  it('still scrobbles what was playing before somebody cast over it', async () => {
+    const result = await replay(await configured(), [
+      trackStart(0, SONG),
+      { at: 150_000, metadata: spotifyConnect(NEXT), playback: playing(0, 149_000) }
+    ]);
+    expect(timesScrobbled(result, 'Come Down')).toBe(1);
+    expect(timesScrobbled(result, 'Silicon Valley')).toBe(0);
   });
 });

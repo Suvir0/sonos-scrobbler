@@ -113,22 +113,38 @@ export function isRadioContainer(type: SonosContainerType | undefined): boolean 
 }
 
 /**
- * Whether this looks like AirPlay or Spotify Connect rather than a Sonos-native
- * service.
+ * Container types a speaker reports while an app is casting to it.
  *
- * The cloud API has no explicit flag for it. The signal available is the absence of a
- * music service on both the container and the track: a native service always names
- * itself, whereas a handoff stream has nowhere to get a service name from. This is
- * weaker than the LAN app's `x-sonos-vli:` scheme check and is one of the things to
- * confirm against real payloads before trusting it.
+ * Seen on real speakers: Spotify Connect is `spotify.connect` for its first event and
+ * then `collection.spotify.connect` or `playlist.spotify.connect` — the prefix follows
+ * whatever the phone is playing from, so only the `.connect` ending is relied on.
+ * AirPlay is `linein.airplay`, with a service named "Airplay".
+ */
+const HANDOFF_CONTAINER = /(^|\.)(connect|airplay)$/;
+
+/**
+ * Whether this is AirPlay, Spotify Connect or similar rather than the speaker playing
+ * a service itself.
+ *
+ * Sonos says so in the container type, and over Spotify Connect also in the playback
+ * session's client id. Neither can be inferred from the service: Spotify Connect names
+ * Spotify and AirPlay names "Airplay", just as a native service names itself, which is
+ * how checking for a missing service let every cast play through with this switch off
+ * — and Spotify's own Last.fm link then scrobbled the same plays again.
+ *
+ * The missing-service shape is still accepted as a last resort: it is what a handoff
+ * looked like before either signal was confirmed, and a named track with no service and
+ * no container type has nothing else it could be.
  */
 export function looksLikeHandoff(status: MetadataStatus): boolean {
+  const containerType = status.container?.type;
+  if (containerType && HANDOFF_CONTAINER.test(containerType)) return true;
+  if (status.playbackSession?.clientId?.endsWith('.connect.adapter')) return true;
+
   const track = status.currentItem?.track;
   const hasService = Boolean(status.container?.service?.name ?? track?.service?.name);
   if (hasService) return false;
-  // A container type of `linein` is TV/aux, handled separately; an absent container
-  // with a named track is the handoff shape.
-  return Boolean(track?.name) && status.container?.type === undefined;
+  return Boolean(track?.name) && containerType === undefined;
 }
 
 /**

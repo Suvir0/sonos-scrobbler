@@ -87,6 +87,17 @@ export interface MetadataStatus {
   nextItem?: SonosItem;
   /** Free text, typically "Artist - Title", for stations with no `currentItem`. */
   streamInfo?: string;
+  /**
+   * Who is driving playback. Absent from the published schema, but sent: over Spotify
+   * Connect a real speaker reports `clientId: "spotify.connect.adapter"` here.
+   */
+  playbackSession?: SonosPlaybackSession;
+}
+
+export interface SonosPlaybackSession {
+  clientId?: string;
+  isSuspended?: boolean;
+  accountId?: string;
 }
 
 export type PlaybackState =

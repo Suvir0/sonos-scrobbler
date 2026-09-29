@@ -138,8 +138,12 @@ single line in it that sends a play, pause, skip or volume command.
 
 **Will I get duplicate entries?**
 Not from this. Every play is checked against what's already been sent before it goes. If
-you also scrobble from the Spotify app on your phone and cast to a Sonos, leave *Music
-cast from an app* switched off and Spotify will handle those.
+you also have Last.fm connected in Spotify and cast to a Sonos with Spotify Connect, leave
+*Music cast from an app* switched off and Spotify will handle those. Spotify doesn't always
+send them straight away — it can hold them until you next play something on the phone or
+computer and then send a few days' worth at once — but they do arrive, and with the switch
+off this service doesn't send a second copy. Songs you start from the Sonos app itself are
+not casting and are always scrobbled here.
 
 **Do long song titles come through whole?**
 Not from Sonos, they don't. The speaker reports roughly the first hundred bytes of a
