@@ -23,6 +23,18 @@ const NEVER_SCROBBLE_CONTAINERS: ReadonlySet<string> = new Set([
   'audiobook'
 ]);
 
+/**
+ * Whether a container is never music.
+ *
+ * TV audio is matched by prefix because a real soundbar reports the input as well:
+ * `linein.homeTheater.hdmi`, and `linein.homeTheater.spdif` for optical. Only the
+ * home-theater family is widened this way. `linein.airplay` is AirPlay, which is a
+ * cast rather than line-in and is left for the handoff switch to decide.
+ */
+function isNeverScrobbleContainer(type: string): boolean {
+  return NEVER_SCROBBLE_CONTAINERS.has(type) || type.startsWith('linein.homeTheater.');
+}
+
 /** Track types that are spoken-word rather than music, wherever they turn up. */
 const NEVER_SCROBBLE_TRACKS: ReadonlySet<string> = new Set(['episode', 'show', 'audiobook']);
 
@@ -182,7 +194,7 @@ export function classify(status: MetadataStatus, options: ClassifyOptions = {}):
 
   // TV audio, line-in, podcasts, audiobooks. Checked before anything else so a
   // podcast episode that happens to carry an artist tag still gets declined.
-  if (containerType && NEVER_SCROBBLE_CONTAINERS.has(containerType)) {
+  if (containerType && isNeverScrobbleContainer(containerType)) {
     return { scrobbleable: false, reason: 'not-music' };
   }
   if (track?.type && NEVER_SCROBBLE_TRACKS.has(track.type)) {

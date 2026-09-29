@@ -48,6 +48,51 @@ describe('classify', () => {
     expect(classify(status)).toEqual({ scrobbleable: false, reason: 'not-music' });
   });
 
+  it.each(['linein.homeTheater.hdmi', 'linein.homeTheater.spdif'])(
+    'declines TV audio reported as %s',
+    (type) => {
+      // What a real Arc reports on HDMI; optical is the same with `.spdif`.
+      expect(classify({ container: { name: 'TV Audio', type } })).toEqual({
+        scrobbleable: false,
+        reason: 'not-music'
+      });
+    }
+  );
+
+  it.each(['linein.homeTheater.hdmi', 'linein.homeTheater.spdif'])(
+    'declines TV audio reported as %s even when it names a track',
+    (type) => {
+      // Before the prefix match this was only declined because TV sends no track. A
+      // TV app that did pass through a title and an artist would have been scrobbled.
+      const status: MetadataStatus = {
+        container: { name: 'TV Audio', type },
+        currentItem: {
+          track: {
+            type: 'track',
+            name: 'Main Theme',
+            artist: { name: 'Some Composer' },
+            durationMillis: 180_000
+          }
+        }
+      };
+      expect(classify(status, { allowHandoff: true })).toEqual({
+        scrobbleable: false,
+        reason: 'not-music'
+      });
+    }
+  );
+
+  it('leaves AirPlay to the handoff switch rather than calling it line-in', () => {
+    const airplay: MetadataStatus = {
+      container: { type: 'linein.airplay' },
+      currentItem: { track: { type: 'track', name: 'Some Song', artist: { name: 'Someone' } } }
+    };
+    // Whether it scrobbles is the handoff switch's call; all this guards is that the
+    // TV prefix never turns it into "not music", which no setting could then undo.
+    expect(classify(airplay)).not.toMatchObject({ reason: 'not-music' });
+    expect(classify(airplay, { allowHandoff: true }).scrobbleable).toBe(true);
+  });
+
   it('declines line-in', () => {
     expect(classify({ container: { name: 'Turntable', type: 'linein' } })).toEqual({
       scrobbleable: false,
