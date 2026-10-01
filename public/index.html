@@ -142,10 +142,14 @@
           <span>
             <span class="name">Music cast from an app</span>
             <span class="why"
-              >AirPlay, Spotify Connect and similar hand playback to the speaker. This is how
-              a YouTube video usually reaches a Sonos, and nothing in what the speaker
-              reports tells a video apart from a song. Their own apps usually scrobble real
-              music already, so leaving this off avoids duplicates as well.</span
+              >AirPlay, Spotify Connect and similar hand playback to the speaker. Leave this
+              off if the app scrobbles for you already, as Spotify does once Last.fm is
+              connected in its settings. It may hold Spotify Connect plays and send them
+              the next time you play on your phone or computer, but they arrive. Turned
+              on, those plays are recorded twice. Turn it on only if nothing else scrobbles
+              them. It also lets a YouTube video through, because nothing the speaker
+              reports tells a video apart from a song. Music started in the Sonos app
+              always scrobbles here.</span
             >
           </span>
         </label>
@@ -550,7 +554,9 @@
       /* -------------------------------------------------------------------- hero */
 
       function renderHero(data) {
-        const playing = data.nowPlaying ?? [];
+        // A room playing something this service scrobbles leads; a cast it is leaving
+        // to the app goes after.
+        const playing = [...(data.nowPlaying ?? [])].sort((a, b) => !!a.cast - !!b.cast);
         const rooms = data.rooms ?? [];
 
         $('hero-pitch').hidden = true;
@@ -562,21 +568,32 @@
           // The service is named alongside the room because "which app is this coming
           // from" is the question a duplicate or a missing scrobble always turns on, and
           // nothing else on the page answers it.
-          $('np-room').textContent = first.service
-            ? `Now playing · ${first.room} · ${first.service}`
-            : `Now playing · ${first.room}`;
-          $('np-track').textContent = first.track;
-          // Artist and album on one line, as the design has it; the album is dropped
-          // rather than shown as a dangling dash when the source did not report one.
-          $('np-by').textContent = first.album
-            ? `${first.artist} · ${first.album}`
-            : first.artist;
+          if (first.cast) {
+            // Deliberately not scrobbled, and said so: "Nothing playing" here read as the
+            // service being broken to someone whose switch was doing exactly its job.
+            $('np-room').textContent = `Now playing · ${first.room} · ${first.cast}`;
+            $('np-track').textContent = `Cast from ${first.cast}`;
+            $('np-by').textContent =
+              'Not scrobbled here, because Music cast from an app is off. If Last.fm is ' +
+              'connected in Spotify, Spotify records these itself, sometimes only once ' +
+              'you next play on your phone or computer.';
+          } else {
+            $('np-room').textContent = first.service
+              ? `Now playing · ${first.room} · ${first.service}`
+              : `Now playing · ${first.room}`;
+            $('np-track').textContent = first.track;
+            // Artist and album on one line, as the design has it; the album is dropped
+            // rather than shown as a dangling dash when the source did not report one.
+            $('np-by').textContent = first.album
+              ? `${first.artist} · ${first.album}`
+              : first.artist;
+          }
 
           // Every other room the service is watching, on one mono line: what else is
           // going, and what is silent.
           const busy = new Set(playing.map((item) => item.room));
           const others = [
-            ...rest.map((item) => `${item.room} · ${item.track}`),
+            ...rest.map((item) => `${item.room} · ${item.cast ? 'cast' : item.track}`),
             ...rooms.filter((room) => !busy.has(room)).map((room) => `${room} · quiet`)
           ];
           $('np-elsewhere').textContent = others.join(' ');

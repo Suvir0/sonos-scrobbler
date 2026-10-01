@@ -143,7 +143,15 @@ you also have Last.fm connected in Spotify and cast to a Sonos with Spotify Conn
 send them straight away — it can hold them until you next play something on the phone or
 computer and then send a few days' worth at once — but they do arrive, and with the switch
 off this service doesn't send a second copy. Songs you start from the Sonos app itself are
-not casting and are always scrobbled here.
+not casting and are always scrobbled here. While you cast, the page shows the room as
+*Cast from Spotify Connect* (or AirPlay) rather than a song, so you can see it's being left
+to Spotify on purpose.
+
+Turning the switch on while Spotify's Last.fm connection is also on gets every Spotify
+Connect play recorded twice once Spotify catches up. AirPlay from the Spotify app is the
+same, except Spotify scrobbles those straight away, so the duplicates show up immediately.
+Last.fm has no way for this service to remove a scrobble afterwards, so pick one or the
+other.
 
 **Do long song titles come through whole?**
 Not from Sonos, they don't. The speaker reports roughly the first hundred bytes of a

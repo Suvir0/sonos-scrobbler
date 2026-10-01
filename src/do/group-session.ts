@@ -17,7 +17,13 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
 import { log } from '../lib/log.js';
 import { clientForUser } from '../sonos/account.js';
-import { classify, MAX_SONG_MS, type ScrobbleCandidate } from '../sonos/classify.js';
+import {
+  classify,
+  handoffSource,
+  MAX_SONG_MS,
+  type HandoffSource,
+  type ScrobbleCandidate
+} from '../sonos/classify.js';
 import type { MetadataStatus, PlaybackStatus } from '../sonos/types.js';
 import {
   anchor,
@@ -93,6 +99,20 @@ export function groupSessionName(userId: string, groupId: string): string {
 interface PendingTrack {
   track: ScrobbleCandidate;
   atMs: number;
+}
+
+/**
+ * A play this group is deliberately leaving alone because an app is casting it.
+ *
+ * Kept only so the page can say so: without it a cast reads as "Nothing playing", which
+ * looked to one Reddit user exactly like the service had stopped working. Holds how the
+ * music arrives and nothing about what it is — the title of a play we never scrobble
+ * has no business being stored.
+ */
+interface CastNotice {
+  /** Undefined for a cast Sonos does not label. */
+  source?: HandoffSource;
+  playing: boolean;
 }
 
 interface FinalPositionHint {
@@ -226,6 +246,7 @@ export class GroupSession extends DurableObject<Env> {
       await this.ctx.storage.delete(['session', 'pending', 'hint', 'reconcileAttempts']);
       await this.ctx.storage.deleteAlarm();
     }
+    await this.ctx.storage.delete('cast');
     return { declined: 'room-off' };
   }
 
@@ -269,7 +290,10 @@ export class GroupSession extends DurableObject<Env> {
     }
 
     const current = await this.session();
-    if (!current) return {};
+    if (!current) {
+      await this.followCast(status.playbackState);
+      return {};
+    }
 
     // IDLE and PAUSED both stop the clock, but IDLE means the source is gone (radio
     // stopped, queue ended) so the play is over rather than suspended.
@@ -314,9 +338,21 @@ export class GroupSession extends DurableObject<Env> {
       const outcome = current ? await this.finalizeCurrent(current, nowMs) : {};
       await this.ctx.storage.delete('session');
       await this.ctx.storage.delete('pending');
+      if (result.reason === 'handoff-source') {
+        // Metadata carries no play state; a cast that has just announced a track is
+        // playing it, and the playback events that follow keep this honest.
+        const source = handoffSource(status);
+        const notice: CastNotice = { ...(source ? { source } : {}), playing: true };
+        await this.ctx.storage.put('cast', notice);
+      } else {
+        await this.ctx.storage.delete('cast');
+      }
       await this.rescheduleAlarm(nowMs);
       return { ...outcome, declined: result.reason };
     }
+
+    // Something this service does scrobble is on now, so any cast it replaced is over.
+    await this.ctx.storage.delete('cast');
 
     // A metadata refresh for the track already playing — artwork arriving late, an
     // album name filling in. Update the details without disturbing the clock.
@@ -345,6 +381,18 @@ export class GroupSession extends DurableObject<Env> {
   }
 
   /* -------------------------------------------------------------- internals */
+
+  /** Keeps a cast notice's play state current, and drops it when the cast ends. */
+  private async followCast(state: PlaybackStatus['playbackState']): Promise<void> {
+    const cast = await this.ctx.storage.get<CastNotice>('cast');
+    if (!cast) return;
+    if (state === 'PLAYBACK_STATE_IDLE') {
+      await this.ctx.storage.delete('cast');
+      return;
+    }
+    const playing = state === 'PLAYBACK_STATE_PLAYING';
+    if (playing !== cast.playing) await this.ctx.storage.put('cast', { ...cast, playing });
+  }
 
   private async resolvePending(
     pending: PendingTrack,
@@ -667,9 +715,16 @@ export class GroupSession extends DurableObject<Env> {
   }
 
   /** Read-only view for the "what is playing now" panel. Never persisted anywhere. */
-  async snapshot(): Promise<{ track?: ScrobbleCandidate; playing: boolean } | undefined> {
+  async snapshot(): Promise<
+    | { track?: ScrobbleCandidate; cast?: { source?: HandoffSource }; playing: boolean }
+    | undefined
+  > {
     const session = await this.session();
-    if (!session) return undefined;
+    if (!session) {
+      const cast = await this.ctx.storage.get<CastNotice>('cast');
+      if (!cast) return undefined;
+      return { cast: cast.source ? { source: cast.source } : {}, playing: cast.playing };
+    }
     // The panel shows what will be scrobbled, which is the whole title where one was
     // recovered, not the stub the speaker reported.
     const track = session.track;

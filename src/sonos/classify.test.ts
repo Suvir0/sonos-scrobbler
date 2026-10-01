@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { classify, looksLikeHandoff, MAX_SONG_MS, parseStreamInfo } from './classify.js';
+import {
+  classify,
+  handoffSource,
+  looksLikeHandoff,
+  MAX_SONG_MS,
+  parseStreamInfo
+} from './classify.js';
 import type { MetadataStatus } from './types.js';
 
 /** A normal music track from a named service, the overwhelmingly common case. */
@@ -356,6 +362,14 @@ describe('classify', () => {
         playbackSession: { clientId: 'com.sonos.airplay' }
       };
       expect(classify(airplay)).toEqual({ scrobbleable: false, reason: 'handoff-source' });
+    });
+
+    it('names the cast it is declining', () => {
+      expect(handoffSource(spotifyConnect)).toBe('Spotify Connect');
+      expect(
+        handoffSource({ container: { type: 'linein.airplay', service: { name: 'Airplay' } } })
+      ).toBe('AirPlay');
+      expect(handoffSource(musicTrack())).toBeUndefined();
     });
 
     it('does not mistake Apple Music started from the Sonos app for handoff', () => {
