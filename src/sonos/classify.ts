@@ -159,6 +159,21 @@ export function looksLikeHandoff(status: MetadataStatus): boolean {
   return Boolean(track?.name) && containerType === undefined;
 }
 
+/** Which kind of cast this is, for saying so on the page. Read from the same signals. */
+export type HandoffSource = 'Spotify Connect' | 'AirPlay';
+
+/**
+ * Names the cast a handoff came over, or undefined when it is one of the unlabelled
+ * shapes `looksLikeHandoff` also accepts.
+ */
+export function handoffSource(status: MetadataStatus): HandoffSource | undefined {
+  const containerType = status.container?.type ?? '';
+  if (status.playbackSession?.clientId?.endsWith('.connect.adapter')) return 'Spotify Connect';
+  if (/(^|\.)connect$/.test(containerType)) return 'Spotify Connect';
+  if (/(^|\.)airplay$/.test(containerType)) return 'AirPlay';
+  return undefined;
+}
+
 /**
  * Splits the "Artist - Title" text radio stations put in `streamInfo`.
  *

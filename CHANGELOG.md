@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**A cast play now shows on the page instead of "Nothing playing".** Reported from Reddit
+after the fix below: with *Music cast from an app* off, Spotify Connect was correctly
+left to Spotify, but the page said nothing was playing, which looked exactly like the
+service had stopped. The room now reads *Cast from Spotify Connect* (or AirPlay), with a
+note that Spotify records these itself and may send them late. Only how the music is
+arriving is kept for this, never the title of a play this service declined. The switch's
+own description now also says what turning it on costs when Spotify scrobbles too.
+
 **"Music cast from an app" now actually stops Spotify Connect and AirPlay.** Reported
 from Reddit: with the switch off, plays cast to a Sonos over Spotify Connect were
 scrobbled here anyway, and then Spotify's own Last.fm link submitted the same plays

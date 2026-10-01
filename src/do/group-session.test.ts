@@ -506,4 +506,42 @@ describe('music cast to the speaker from an app', () => {
     expect(timesScrobbled(result, 'Come Down')).toBe(1);
     expect(timesScrobbled(result, 'Silicon Valley')).toBe(0);
   });
+
+  // Reported after the switch was fixed: with it off, the page said "Nothing playing"
+  // through a whole Spotify Connect session, which read as the service being broken.
+  describe('what the page is told while a cast plays', () => {
+    it('says a cast is playing, and how, without the song', async () => {
+      const stub = await configured();
+      await replay(stub, castSteps());
+      expect(await stub.snapshot()).toEqual({
+        cast: { source: 'Spotify Connect' },
+        playing: true
+      });
+    });
+
+    it('follows the cast when it pauses', async () => {
+      const stub = await configured();
+      await replay(stub, [...castSteps(), { at: 200_000, playback: paused(20_000) }]);
+      expect((await stub.snapshot())?.playing).toBe(false);
+    });
+
+    it('forgets the cast once playback ends', async () => {
+      const stub = await configured();
+      await replay(stub, [...castSteps(), { at: 200_000, playback: idle() }]);
+      expect(await stub.snapshot()).toBeUndefined();
+    });
+
+    it('gives way to a song started from the Sonos app', async () => {
+      const stub = await configured();
+      const result = await replay(
+        stub,
+        [...castSteps(), { at: 200_000, metadata: metadataFor(SONG), playback: playing(0) }],
+        { tailMs: 10_000 }
+      );
+      const snapshot = await stub.snapshot();
+      expect(snapshot?.cast).toBeUndefined();
+      expect(snapshot?.track?.track).toBe('Come Down');
+      expect(timesScrobbled(result, 'Silicon Valley')).toBe(0);
+    });
+  });
 });
