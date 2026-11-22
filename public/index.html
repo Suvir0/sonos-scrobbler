@@ -199,6 +199,22 @@
           After that it lives on Last.fm and ListenBrainz, which is where you read it back.
         </p>
 
+        <!-- From 1 December 2026 Last.fm only honours an API key while its owner pays for
+             Pro. This service runs on one key, so the bill lands here. A plain outbound
+             link on purpose: no widget, no third-party script, nothing the CSP has to
+             allow. -->
+        <div class="support">
+          <p class="support-lead">This site needs your help to stay online.</p>
+          <p>
+            Last.fm now charges developers a Pro subscription to keep an API key working, and
+            the servers cost money too. Without donations I can't keep this running. If it
+            scrobbles for you, please chip in.
+          </p>
+          <a class="btn solid donate" href="https://cash.app/$SuvirPotdar" rel="noopener noreferrer"
+            >Donate with Cash App · $SuvirPotdar</a
+          >
+        </div>
+
         <details id="account" hidden>
           <summary>Account</summary>
           <div class="account-actions">
@@ -230,6 +246,77 @@
         </nav>
       </footer>
     </main>
+
+    <!-- Shown once per browser, on the first visit. The close button stays disabled for
+         three seconds so the message is read rather than dismissed on reflex; after that
+         a flag in localStorage keeps it from coming back. -->
+    <dialog class="appeal" id="appeal" aria-labelledby="appeal-title" closedby="none">
+      <p class="eyebrow">A note before you start</p>
+      <h2 id="appeal-title">Help keep this site running</h2>
+      <p>
+        From 1 December 2026, Last.fm requires a paid Pro subscription for every API key. This
+        service runs on one, so the cost falls on me, on top of the servers.
+      </p>
+      <p>
+        <strong>I need donations to keep this website online.</strong> Scrobbler for Sonos
+        stays free for everyone, and nothing changes if you don't give. But if it's useful to
+        you, anything helps.
+      </p>
+      <div class="appeal-actions">
+        <a class="btn solid" href="https://cash.app/$SuvirPotdar" rel="noopener noreferrer"
+          >Donate with Cash App</a
+        >
+        <button class="btn" id="appeal-close" type="button" disabled>Close (3)</button>
+      </div>
+    </dialog>
+
+    <script type="module">
+      const KEY = 'appeal-seen-2026-12';
+      const dialog = document.getElementById('appeal');
+      const close = document.getElementById('appeal-close');
+
+      // Storage can be missing or throw (private windows, blocked site data). Then the
+      // dialog would show on every visit, which is worse than not showing it at all.
+      let seen = true;
+      try {
+        seen = localStorage.getItem(KEY) !== null;
+      } catch {}
+
+      if (!seen && typeof dialog.showModal === 'function') {
+        try {
+          localStorage.setItem(KEY, String(Date.now()));
+        } catch {}
+
+        let left = 3;
+        let locked = true;
+        // Escape would otherwise close a modal dialog straight away. `closedby="none"`
+        // stops it where supported; elsewhere Chrome lets the first Escape through even
+        // when `cancel` is prevented, so a close during the countdown just reopens it.
+        // Once the countdown ends, Escape closes it like any other dialog.
+        dialog.addEventListener('cancel', (event) => {
+          if (locked) event.preventDefault();
+        });
+        dialog.addEventListener('close', () => {
+          if (locked) dialog.showModal();
+        });
+        close.addEventListener('click', () => dialog.close());
+
+        dialog.showModal();
+        const tick = setInterval(() => {
+          left -= 1;
+          if (left > 0) {
+            close.textContent = `Close (${left})`;
+            return;
+          }
+          clearInterval(tick);
+          locked = false;
+          close.disabled = false;
+          close.textContent = 'Close';
+          dialog.removeAttribute('closedby');
+          close.focus();
+        }, 1000);
+      }
+    </script>
 
     <script type="module">
       const $ = (id) => document.getElementById(id);

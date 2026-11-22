@@ -690,6 +690,83 @@ footer strong {
   color: var(--ink);
 }
 
+/* The donation note. It carries the site's running costs, so it is meant to be seen:
+   a bordered panel in the accent colour, bold, with a full-weight button. */
+footer .support {
+  margin: 4px 0 18px;
+  padding: 16px 18px 18px;
+  border: 2px solid var(--accent);
+  background: var(--panel);
+  color: var(--ink);
+  font: 600 14px/1.55 var(--sans);
+}
+
+footer .support p {
+  margin: 0 0 12px;
+}
+
+footer .support .support-lead {
+  font: 800 17px/1.3 var(--sans);
+  color: var(--accent-text);
+}
+
+.btn.donate,
+.appeal .btn.solid {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.donate:hover,
+.appeal .btn.solid:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+/* First-visit appeal. */
+dialog.appeal {
+  max-width: min(32rem, calc(100vw - 32px));
+  padding: 24px 22px 22px;
+  border: 2px solid var(--rule-strong);
+  border-top: 8px solid var(--accent);
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 15px/1.55 var(--sans);
+}
+
+dialog.appeal::backdrop {
+  background: rgb(0 0 0 / 0.55);
+}
+
+dialog.appeal h2 {
+  font: 800 24px/1.2 var(--sans);
+  margin: 4px 0 12px;
+}
+
+dialog.appeal p {
+  margin: 0 0 12px;
+}
+
+dialog.appeal .eyebrow {
+  font: 500 12px/1.4 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  margin: 0;
+}
+
+.appeal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.appeal-actions .btn {
+  flex: 1 1 12rem;
+}
+
 footer .fine {
   font-size: 11px;
   line-height: 1.6;
